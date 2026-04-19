@@ -1,0 +1,1002 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="theme-color" content="#F5F2EC" />
+<title>健幸バトル</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;500&family=Noto+Serif+JP:wght@300;400;500;600&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  :root{
+    --bg: #F5F2EC; --bg-soft: #EFEBE2; --ink: #1A1A1A; --ink-2: #4A4A4A; --ink-3: #8A8478;
+    --line: #D9D3C7; --line-soft: #E8E3D9; --paper: #FFFFFF;
+    --accent-1: #1A1A1A; --accent-2: #A88A63; --gold: #8F7348;
+  }
+  html, body, #root { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font-family: "Noto Serif JP", "Hiragino Mincho ProN", serif;
+    letter-spacing: 0.02em; -webkit-tap-highlight-color: transparent; -webkit-font-smoothing: antialiased; }
+  .font-en { font-family: "Cormorant Garamond", "Noto Serif JP", serif; letter-spacing: 0.14em; }
+  .font-ui { font-family: "Inter", "Noto Sans JP", sans-serif; letter-spacing: 0.04em; }
+  .font-jp { font-family: "Noto Serif JP", serif; }
+  .tracking-widest-xl { letter-spacing: 0.28em; }
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type="number"] { -moz-appearance: textfield; }
+  .safe-top { padding-top: env(safe-area-inset-top); }
+  .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+  .hairline { border-top: 1px solid var(--line); }
+  .hairline-soft { border-top: 1px solid var(--line-soft); }
+  .paper { background: var(--paper); border: 1px solid var(--line-soft); }
+  .input-base { background: transparent; border: none; border-bottom: 1px solid var(--line);
+    border-radius: 0; padding: 10px 0;
+    font-family: "Inter", "Noto Serif JP", sans-serif; color: var(--ink);
+    width: 100%; outline: none; transition: border-color .2s;
+    font-size: 17px; letter-spacing: 0.03em; }
+  .input-base:focus { border-color: var(--ink); }
+  .btn-ink { background: var(--ink); color: #fff; padding: 14px 0; width:100%;
+    font-family: "Inter", "Noto Sans JP", sans-serif;
+    font-size: 12px; font-weight: 500; letter-spacing: 0.32em;
+    text-transform: uppercase; transition: opacity .2s; }
+  .btn-ink:disabled { background: var(--ink-3); cursor: not-allowed; }
+  .btn-ghost { background: transparent; color: var(--ink); padding: 12px 0; width:100%;
+    font-family: "Inter", "Noto Sans JP", sans-serif;
+    font-size: 11px; font-weight: 500; letter-spacing: 0.28em;
+    text-transform: uppercase; border: 1px solid var(--line); }
+  .vrule { width:1px; background: var(--line); }
+  .dot { width:6px; height:6px; border-radius: 9999px; display:inline-block; }
+  #boot-msg { display:flex; height:100vh; align-items:center; justify-content:center; color:var(--ink-3); font-size:12px; letter-spacing:0.3em; }
+  .pass-dot { width: 16px; height: 16px; border-radius: 9999px; border: 1px solid var(--line); background: transparent; }
+  .pass-dot.filled { background: var(--ink); border-color: var(--ink); }
+  .keypad-key { height: 56px; display:flex; align-items:center; justify-content:center;
+    font-family:"Inter", sans-serif; font-size: 22px; letter-spacing:0.06em;
+    color: var(--ink); cursor:pointer; user-select: none; transition: background .15s; }
+  .keypad-key:active { background: var(--bg-soft); }
+  .pair-code-display {
+    font-family: "Inter", monospace; letter-spacing: 0.5em; font-size: 28px; font-weight: 500;
+    padding: 20px 24px; background: var(--bg-soft); border: 1px dashed var(--line);
+    text-align: center; color: var(--ink);
+  }
+  .pair-code-input {
+    font-family: "Inter", monospace; letter-spacing: 0.5em; font-size: 24px; text-align: center;
+    text-transform: uppercase;
+  }
+  .online-dot { width: 6px; height: 6px; border-radius: 9999px; background: #10b981; display:inline-block; }
+  .offline-dot { width: 6px; height: 6px; border-radius: 9999px; background: #ef4444; display:inline-block; }
+</style>
+</head>
+<body>
+<div id="root"><div id="boot-msg">LOADING</div></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo, useRef } = React;
+
+// ========= Supabase =========
+const SUPABASE_URL = "https://fackpcqplrtffvheylyr.supabase.co";
+const SUPABASE_KEY = "sb_publishable_sgQKEu1pHMeW5pJjcVc37g_RRUIPvmD";
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// ========= 定数 =========
+const DEVICE_KEY = "kenko_battle_device_v1";
+const PEOPLE = [
+  { id: "husband", name: "夫", label: "HUSBAND", color: "var(--accent-1)" },
+  { id: "wife",    name: "妻", label: "WIFE",    color: "var(--accent-2)" },
+];
+
+// ========= ユーティリティ =========
+const pad2 = (n) => String(n).padStart(2, "0");
+const toYMD = (d) => `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
+const today = () => toYMD(new Date());
+const recentMondayStr = () => {
+  const d = new Date(); const diff = (d.getDay() + 6) % 7; d.setDate(d.getDate() - diff); return toYMD(d);
+};
+const daysToNextMonday = () => { const d = new Date(); const k = (1 - d.getDay() + 7) % 7; return k === 0 ? 0 : k; };
+const fmt = (n, d=1) => (n==null || isNaN(n)) ? "—" : Number(n).toFixed(d);
+const fmtDate = (s) => { if (!s) return ""; const d = new Date(s); return `${d.getMonth()+1}/${d.getDate()}`; };
+const fmtDateLong = (s) => { if (!s) return ""; const d = new Date(s); return `${d.getFullYear()}.${pad2(d.getMonth()+1)}.${pad2(d.getDate())}`; };
+const calcMuscleRate = (muscleKg, weightKg) => {
+  if (!muscleKg || !weightKg) return null;
+  const m = Number(muscleKg), w = Number(weightKg);
+  if (!m || !w) return null;
+  return (m / w) * 100;
+};
+const PAIR_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const genPairCode = () => {
+  let s = "";
+  for (let i=0; i<6; i++) s += PAIR_ALPHABET[Math.floor(Math.random() * PAIR_ALPHABET.length)];
+  return s;
+};
+
+// ========= Device (localStorage) =========
+const loadDevice = () => {
+  try { const raw = localStorage.getItem(DEVICE_KEY); return raw ? JSON.parse(raw) : null; }
+  catch(e) { return null; }
+};
+const saveDevice = (d) => { try { localStorage.setItem(DEVICE_KEY, JSON.stringify(d)); } catch(e){} };
+const clearDevice = () => { try { localStorage.removeItem(DEVICE_KEY); } catch(e){} };
+
+// ========= Supabase Pair Ops =========
+async function createPairOnServer() {
+  for (let tries = 0; tries < 10; tries++) {
+    const code = genPairCode();
+    const { data, error } = await sb.from('pairs').insert({ code }).select().single();
+    if (!error && data) return { pair_id: data.id, pair_code: data.code };
+    if (error && !String(error.message || "").toLowerCase().includes("duplicate")) throw error;
+  }
+  throw new Error("ペアコード生成に失敗しました");
+}
+async function findPair(code) {
+  const { data, error } = await sb.from('pairs').select('id,code').eq('code', code).maybeSingle();
+  if (error) throw error;
+  return data ? { pair_id: data.id, pair_code: data.code } : null;
+}
+
+// ========= App =========
+function App() {
+  const [device, setDevice] = useState(loadDevice());
+  const [weekly, setWeekly] = useState([]);
+  const [daily, setDaily] = useState([]);
+  const [tab, setTab] = useState("home");
+  const [showSettings, setShowSettings] = useState(false);
+  const [online, setOnline] = useState(true);
+
+  // データ取得
+  const refetch = async (pair_id) => {
+    try {
+      const [w, d] = await Promise.all([
+        sb.from('weekly_records').select('*').eq('pair_id', pair_id).order('date', { ascending: true }),
+        sb.from('daily_records').select('*').eq('pair_id', pair_id).order('date', { ascending: true }),
+      ]);
+      if (w.error) throw w.error; if (d.error) throw d.error;
+      setWeekly(w.data || []); setDaily(d.data || []); setOnline(true);
+    } catch (e) { console.error(e); setOnline(false); }
+  };
+
+  // 起動時 + device 変更時にフェッチ
+  useEffect(() => {
+    if (!device) return;
+    refetch(device.pair_id);
+  }, [device && device.pair_id]);
+
+  // Realtime 購読
+  useEffect(() => {
+    if (!device) return;
+    const ch = sb.channel("realtime-" + device.pair_id)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'weekly_records', filter: `pair_id=eq.${device.pair_id}` },
+        () => refetch(device.pair_id))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'daily_records', filter: `pair_id=eq.${device.pair_id}` },
+        () => refetch(device.pair_id))
+      .subscribe();
+    return () => { sb.removeChannel(ch); };
+  }, [device && device.pair_id]);
+
+  if (!device) {
+    return <FirstRunSetup onDone={(d)=>{ saveDevice(d); setDevice(d); }} />;
+  }
+
+  const me = PEOPLE.find(p => p.id === device.role);
+
+  // --- weekly ops ---
+  const addWeekly = async (rec) => {
+    const { error } = await sb.from('weekly_records').upsert({
+      pair_id: device.pair_id, person: me.id,
+      date: rec.date, weight: rec.weight, fat: rec.fat, muscle: rec.muscle,
+    }, { onConflict: 'pair_id,person,date' });
+    if (error) { alert("保存に失敗: " + error.message); return; }
+    refetch(device.pair_id);
+  };
+  const deleteWeekly = async (id) => {
+    const { error } = await sb.from('weekly_records').delete().eq('id', id);
+    if (error) { alert("削除に失敗: " + error.message); return; }
+    refetch(device.pair_id);
+  };
+
+  // --- daily ops ---
+  const upsertDaily = async (date, period, weight) => {
+    if (weight === null || weight === undefined || weight === "") {
+      const { error } = await sb.from('daily_records').delete()
+        .eq('pair_id', device.pair_id).eq('person', me.id).eq('date', date).eq('period', period);
+      if (error) { alert("削除に失敗: " + error.message); return; }
+    } else {
+      const { error } = await sb.from('daily_records').upsert({
+        pair_id: device.pair_id, person: me.id, date, period, weight: Number(weight),
+      }, { onConflict: 'pair_id,person,date,period' });
+      if (error) { alert("保存に失敗: " + error.message); return; }
+    }
+    refetch(device.pair_id);
+  };
+
+  const resetDevice = () => {
+    const input = prompt("現在のパスコードを入力してください");
+    if (input === null) return;
+    if (input !== device.pass) { alert("パスコードが違います"); return; }
+    if (confirm("このデバイスの利用者設定をリセットします。クラウド上の記録はそのまま残ります。")) {
+      clearDevice(); setDevice(null); setShowSettings(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen safe-top safe-bottom">
+      <Header me={me} online={online} onOpenSettings={()=>setShowSettings(true)} />
+      <div className="max-w-md mx-auto px-6 pb-28">
+        {tab === "home"   && <HomeTab   me={me} weekly={weekly} daily={daily} addWeekly={addWeekly} upsertDaily={upsertDaily} deleteWeekly={deleteWeekly} />}
+        {tab === "graph"  && <GraphTab  weekly={weekly} daily={daily} />}
+        {tab === "battle" && <BattleTab weekly={weekly} />}
+      </div>
+      <BottomNav tab={tab} setTab={setTab} />
+      {showSettings && (
+        <SettingsModal me={me} device={device}
+          onClose={()=>setShowSettings(false)}
+          onResetDevice={resetDevice} />
+      )}
+    </div>
+  );
+}
+
+// ========= Header =========
+function Header({ me, online, onOpenSettings }) {
+  return (
+    <div className="max-w-md mx-auto px-6 pt-6 pb-5">
+      <div className="flex items-start justify-between">
+        <div>
+          <div className="font-ui text-[10px] text-[color:var(--ink-3)] tracking-widest-xl mb-2">— WEEKLY × DAILY —</div>
+          <div className="font-en text-3xl leading-none text-[color:var(--ink)]">KENKO</div>
+          <div className="font-en text-3xl leading-none text-[color:var(--ink)] mt-1">BATTLE</div>
+          <div className="font-jp text-[11px] text-[color:var(--ink-3)] mt-2 tracking-[0.3em]">健 幸 バ ト ル</div>
+        </div>
+        <div className="flex flex-col items-end gap-2">
+          <button onClick={onOpenSettings}
+            className="font-ui text-[10px] tracking-widest text-[color:var(--ink-2)] border border-[color:var(--line)] px-3 py-2">
+            MENU
+          </button>
+          <div className="flex items-center gap-2">
+            <span className="dot" style={{background: me.color}}></span>
+            <span className="font-ui text-[10px] tracking-widest text-[color:var(--ink-2)]">{me.label}</span>
+            <span className="font-jp text-[10px] text-[color:var(--ink-3)] tracking-[0.2em]">{me.name}</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <span className={online ? "online-dot" : "offline-dot"}></span>
+            <span className="font-ui text-[9px] tracking-widest text-[color:var(--ink-3)]">{online ? "SYNCED" : "OFFLINE"}</span>
+          </div>
+        </div>
+      </div>
+      <div className="hairline mt-5"></div>
+    </div>
+  );
+}
+
+// ========= First Run Setup =========
+function FirstRunSetup({ onDone }) {
+  // step: "role" → "enter" → "confirm" → "pair" → "createDone" | "joinInput"
+  const [step, setStep] = useState("role");
+  const [role, setRole] = useState(null);
+  const [pass, setPass] = useState("");
+  const [current, setCurrent] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [pair, setPair] = useState(null); // { pair_id, pair_code }
+  const [joinInput, setJoinInput] = useState("");
+
+  const stepNum = step === "role" ? 1 : (step === "enter" || step === "confirm") ? 2 : 3;
+
+  const handleCreatePair = async () => {
+    setBusy(true); setErr("");
+    try {
+      const p = await createPairOnServer();
+      setPair(p); setStep("createDone"); setBusy(false);
+    } catch (e) { setErr("ペア作成に失敗: " + (e.message || e)); setBusy(false); }
+  };
+  const handleJoinCommit = async () => {
+    const code = joinInput.trim().toUpperCase();
+    if (code.length !== 6) { setErr("6桁のコードを入力してください"); return; }
+    setBusy(true); setErr("");
+    try {
+      const p = await findPair(code);
+      if (!p) { setErr("そのペアコードは見つかりませんでした"); setBusy(false); return; }
+      onDone({ role, pass, pair_id: p.pair_id, pair_code: p.pair_code });
+    } catch (e) { setErr("照合エラー: " + (e.message || e)); setBusy(false); }
+  };
+
+  return (
+    <div className="min-h-screen flex flex-col safe-top safe-bottom">
+      <div className="max-w-md mx-auto w-full px-6 pt-10 pb-10">
+        <div className="font-ui text-[10px] tracking-widest-xl text-[color:var(--ink-3)] mb-2">— SETUP · STEP {stepNum} / 3 —</div>
+        <div className="font-en text-3xl text-[color:var(--ink)]">KENKO BATTLE</div>
+        <div className="font-jp text-[11px] text-[color:var(--ink-3)] mt-2 tracking-[0.3em]">健 幸 バ ト ル</div>
+        <div className="hairline mt-6 mb-10"></div>
+
+        {step === "role" && (
+          <div>
+            <div className="font-ui text-[11px] tracking-widest text-[color:var(--ink-2)]">WHO USES THIS DEVICE?</div>
+            <div className="font-jp text-[13px] text-[color:var(--ink)] mt-2 tracking-[0.15em]">このデバイスを使うのはどちらですか？</div>
+            <div className="font-jp text-[10px] text-[color:var(--ink-3)] mt-2 tracking-[0.18em] leading-relaxed">
+              一度選ぶと、このデバイスからは自分の記録しか入力できません。<br/>切り替えるときはパスコードが必要です。
+            </div>
+            <div className="grid grid-cols-2 gap-4 mt-10">
+              {PEOPLE.map(p => (
+                <button key={p.id} onClick={()=>{ setRole(p.id); setStep("enter"); setCurrent(""); setPass(""); }}
+                  className="paper py-10 flex flex-col items-center">
+                  <span className="dot mb-3" style={{background:p.color, width:10, height:10}}></span>
+                  <span className="font-en text-2xl">{p.label}</span>
+                  <span className="font-jp text-[11px] text-[color:var(--ink-3)] mt-2 tracking-[0.3em]">{p.name}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {(step === "enter" || step === "confirm") && (
+          <div>
+            <div className="font-ui text-[11px] tracking-widest text-[color:var(--ink-2)]">SET A 4-DIGIT PASSCODE</div>
+            <div className="font-jp text-[13px] text-[color:var(--ink)] mt-2 tracking-[0.15em]">4桁のパスコードを設定</div>
+            <div className="font-jp text-[10px] text-[color:var(--ink-3)] mt-2 tracking-[0.18em] leading-relaxed">
+              利用者を切り替えるときだけ必要。普段の記録時には求められません。
+            </div>
+            <div className="mt-10">
+              <div className="font-ui text-[10px] tracking-widest text-[color:var(--ink-3)] mb-3">
+                {step === "enter" ? "ENTER ／ 入力" : "CONFIRM ／ もう一度"}
+              </div>
+              <PasscodeInput length={4} value={current}
+                onChange={(v)=>{
+                  setCurrent(v);
+                  if (v.length === 4) {
+                    if (step === "enter") {
+                      setPass(v);
+                      setTimeout(() => { setStep("confirm"); setCurrent(""); }, 150);
+                    } else {
+                      if (v === pass) {
+                        setTimeout(() => setStep("pair"), 100);
+                      } else {
+                        setErr("パスコードが一致しません。最初から入力してください。");
+                        setTimeout(() => { setStep("enter"); setPass(""); setCurrent(""); setErr(""); }, 1000);
+                      }
+                    }
+                  }
+                }} />
+              {err && <div className="mt-4 text-[11px] text-red-700 font-jp tracking-[0.15em]">{err}</div>}
+              <button onClick={()=>{ setStep("role"); setPass(""); setCurrent(""); setRole(null); }}
+                className="mt-10 font-ui text-[10px] tracking-widest text-[color:var(--ink-3)]">← BACK</button>
+            </div>
+          </div>
+        )}
+
+        {step === "pair" && (
+          <div>
+            <div className="font-ui text-[11px] tracking-widest text-[color:var(--ink-2)]">PAIR WITH YOUR PARTNER</div>
+            <div className="font-jp text-[13px] text-[color:var(--ink)] mt-2 tracking-[0.15em]">パートナーとつながる</div>
+            <div className="font-jp text-[10px] text-[color:var(--ink-3)] mt-2 tracking-[0.18em] leading-relaxed">
+              どちらか一方が「新しいペアをつくる」を選び、発行された6桁コードをもう一方に伝えて「参加する」に入力すると、同じデータを見られるようになります。
+            </div>
+            <div className="mt-10 space-y-3">
+              <button onClick={handleCreatePair} disabled={busy} className="btn-ink">CREATE NEW PAIR　新規作成</button>
+              <button onClick={()=>{ setStep("joinInput"); setErr(""); }} className="btn-ghost">JOIN EXISTING PAIR　参加する</button>
+            </div>
+            {err && <div className="mt-4 text-[11px] text-red-700 font-jp tracking-[0.15em]">{err}</div>}
+            <button onClick={()=>{ setStep("enter"); setPass(""); setCurrent(""); }} className="mt-10 font-ui text-[10px] tracking-widest text-[color:var(--ink-3)]">← BACK</button>
+          </div>
+        )}
+
+        {step === "createDone" && pair && (
+          <div>
+            <div className="font-ui text-[11px] tracking-widest text-[color:var(--ink-2)]">YOUR PAIR CODE</div>
+            <div className="font-jp text-[13px] text-[color:var(--ink)] mt-2 tracking-[0.15em]">ペアコードを発行しました</div>
+            <div className="font-jp text-[10px] text-[color:var(--ink-3)] mt-2 tracking-[0.18em] leading-relaxed">
+              パートナーにこのコードを伝え、もう一方のデバイスで「参加する」に入力してもらってください。あとから「メニュー → ペア情報」で再表示できます。
+            </div>
+            <div className="pair-code-display mt-8">{pair.pair_code}</div>
+            <button onClick={()=>onDone({ role, pass, pair_id: pair.pair_id, pair_code: pair.pair_code })} className="btn-ink mt-8">DONE　完了</button>
+          </div>
+        )}
+
+        {step === "joinInput" && (
+          <div>
+            <div className="font-ui text-[11px] tracking-widest text-[color:var(--ink-2)]">ENTER PAIR CODE</div>
+            <div className="font-jp text-[13px] text-[color:var(--ink)] mt-2 tracking-[0.15em]">ペアコードを入力</div>
+            <div className="font-jp text-[10px] text-[color:var(--ink-3)] mt-2 tracking-[0.18em] leading-relaxed">
+              パートナーから共有された6桁コードを入力してください。
+            </div>
+            <input type="text" maxLength={6} placeholder="XXXXXX" value={joinInput}
+              onChange={(e)=>setJoinInput(e.target.value.toUpperCase())}
+              className="input-base pair-code-input mt-10" />
+            <button onClick={handleJoinCommit} disabled={busy} className="btn-ink mt-6">{busy ? "CHECKING..." : "JOIN"}</button>
+            {err && <div className="mt-4 text-[11px] text-red-700 font-jp tracking-[0.15em]">{err}</div>}
+            <button onClick={()=>{ setStep("pair"); setErr(""); }} className="mt-10 font-ui text-[10px] tracking-widest text-[color:var(--ink-3)]">← BACK</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PasscodeInput({ length=4, value, onChange }) {
+  const push = (c) => { if (value.length < length) onChange(value + c); };
+  const pop  = ()  => onChange(value.slice(0, -1));
+  const keys = ["1","2","3","4","5","6","7","8","9","","0","⌫"];
+  return (
+    <div>
+      <div className="flex justify-center gap-4 mb-6">
+        {Array.from({length}).map((_,i)=>(<span key={i} className={`pass-dot ${i < value.length ? "filled" : ""}`}></span>))}
+      </div>
+      <div className="grid grid-cols-3 gap-2 max-w-[280px] mx-auto">
+        {keys.map((k, i) => k === "" ? <div key={i}></div> : (
+          <div key={i} className="keypad-key" onClick={()=> k === "⌫" ? pop() : push(k)}>{k}</div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ========= HOME TAB =========
+function HomeTab({ me, weekly, daily, addWeekly, upsertDaily, deleteWeekly }) {
+  const myWeekly = weekly.filter(r => r.person === me.id).sort((a,b)=>a.date.localeCompare(b.date));
+  const latestWeekly = myWeekly[myWeekly.length - 1];
+  const toNext = daysToNextMonday();
+  const todayYMD = today();
+  const myTodayMorning = daily.find(r => r.person === me.id && r.date === todayYMD && r.period === "morning");
+  const myTodayNight   = daily.find(r => r.person === me.id && r.date === todayYMD && r.period === "night");
+  const [showWeeklyForm, setShowWeeklyForm] = useState(false);
+
+  return (
+    <div className="pt-6 space-y-10">
+      <div>
+        <div className="font-ui text-[10px] tracking-widest-xl text-[color:var(--ink-3)]">01 / TODAY</div>
+        <div className="font-en text-2xl mt-2">Welcome back.</div>
+        <div className="font-jp text-[11px] text-[color:var(--ink-3)] mt-1 tracking-[0.3em]">{me.name}、お帰りなさい</div>
+        <div className="paper mt-5 px-5 py-5">
+          <div className="flex items-baseline justify-between">
+            <div>
+              <div className="font-ui text-[10px] tracking-widest text-[color:var(--ink-3)]">NEXT MEASUREMENT</div>
+              <div className="font-jp text-[10px] text-[color:var(--ink-3)] mt-1 tracking-[0.25em]">次回の公式測定</div>
+            </div>
+            <div className="text-right">
+              <div className="font-en text-3xl text-[color:var(--ink)] leading-none">
+                {toNext === 0 ? "TODAY" : toNext}
+                {toNext !== 0 && <span className="font-ui text-[10px] tracking-widest ml-1 text-[color:var(--ink-3)]">DAYS</span>}
+              </div>
+              <div className="font-jp text-[10px] text-[color:var(--ink-3)] mt-1 tracking-[0.25em]">
+                {toNext === 0 ? "今日が月曜" : `あと${toNext}日（月曜）`}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div className="font-ui text-[10px] tracking-widest-xl text-[color:var(--ink-3)]">02 / DAILY</div>
+        <div className="font-en text-2xl mt-2">Morning &amp; Night</div>
+        <div className="font-jp text-[11px] text-[color:var(--ink-3)] mt-1 tracking-[0.3em]">今日の朝晩の体重</div>
+        <div className="mt-5 grid grid-cols-2 gap-4">
+          <DailyWeightCard labelEn="MORNING" labelJp="朝" rec={myTodayMorning}
+            onSave={(w)=>upsertDaily(todayYMD, "morning", w)} />
+          <DailyWeightCard labelEn="NIGHT" labelJp="夜" rec={myTodayNight}
+            onSave={(w)=>upsertDaily(todayYMD, "night", w)} />
+        </div>
+      </div>
+
+      <div>
+        <div className="font-ui text-[10px] tracking-widest-xl text-[color:var(--ink-3)]">03 / WEEKLY</div>
+        <div className="font-en text-2xl mt-2">Full Measurement</div>
+        <div className="font-jp text-[11px] text-[color:var(--ink-3)] mt-1 tracking-[0.3em]">週1回・体重／体脂肪率／筋肉量</div>
+        {!showWeeklyForm ? (
+          <div className="paper mt-5 px-5 py-5">
+            <div className="font-ui text-[10px] tracking-widest text-[color:var(--ink-3)]">LATEST ／ 最新記録</div>
+            {latestWeekly ? (
+              <div className="mt-3">
+                <div className="font-en text-sm tracking-widest text-[color:var(--ink)]">{fmtDateLong(latestWeekly.date)}</div>
+                <div className="grid grid-cols-3 gap-2 mt-3">
+                  <Stat labelEn="WT"  valueJp="体重"   value={fmt(latestWeekly.weight)}  unit="kg" />
+                  <Stat labelEn="FAT" valueJp="脂肪"   value={fmt(latestWeekly.fat)}      unit="%"  />
+                  <Stat labelEn="SMR" valueJp="骨格筋" value={fmt(calcMuscleRate(latestWeekly.muscle, latestWeekly.weight))} unit="%" />
+                </div>
+              </div>
+            ) : (
+              <div className="mt-3 font-jp text-[11px] text-[color:var(--ink-3)] tracking-[0.2em]">まだ公式測定がありません</div>
+            )}
+            <button onClick={()=>setShowWeeklyForm(true)} className="btn-ghost mt-5">NEW WEEKLY ENTRY</button>
+          </div>
+        ) : (
+          <WeeklyForm me={me} onSubmit={(rec)=>{ addWeekly(rec); setShowWeeklyForm(false); }}
+            onCancel={()=>setShowWeeklyForm(false)} />
+        )}
+      </div>
+
+      <div>
+        <div className="font-ui text-[10px] tracking-widest-xl text-[color:var(--ink-3)]">04 / HISTORY</div>
+        <div className="font-en text-2xl mt-2">Weekly Log</div>
+        <div className="font-jp text-[11px] text-[color:var(--ink-3)] mt-1 tracking-[0.3em]">{me.name}の公式測定履歴</div>
+        {myWeekly.length === 0 ? (
+          <div className="mt-6 font-jp text-[11px] text-[color:var(--ink-3)] text-center tracking-[0.3em]">— NO RECORDS YET —</div>
+        ) : (
+          <div className="mt-5 divide-y divide-[color:var(--line-soft)]">
+            {myWeekly.slice().reverse().map(r => (
+              <div key={r.id} className="py-4 flex items-start justify-between">
+                <div className="flex-1">
+                  <div className="font-en text-sm tracking-widest text-[color:var(--ink)]">{fmtDateLong(r.date)}</div>
+                  <div className="grid grid-cols-3 gap-2 mt-2">
+                    <Stat small labelEn="WT" valueJp="体重" value={fmt(r.weight)} unit="kg" />
+                    <Stat small labelEn="FAT" valueJp="脂肪" value={fmt(r.fat)} unit="%" />
+                    <Stat small labelEn="SMR" valueJp="骨格筋" value={fmt(calcMuscleRate(r.muscle, r.weight))} unit="%" />
+                  </div>
+                </div>
+                <button onClick={()=>{ if(confirm("この記録を削除しますか？")) deleteWeekly(r.id); }}
+                  className="ml-3 font-ui text-[10px] tracking-widest text-[color:var(--ink-3)] hover:text-red-700">DELETE</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DailyWeightCard({ labelEn, labelJp, rec, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(rec ? String(rec.weight) : "");
+  useEffect(()=>{ setVal(rec ? String(rec.weight) : ""); }, [rec && rec.id]);
+  const commit = () => { if (val === "") onSave(null); else onSave(Number(val)); setEditing(false); };
+  return (
+    <div className="paper px-4 py-5">
+      <div className="flex items-baseline justify-between">
+        <div>
+          <div className="font-ui text-[10px] tracking-widest text-[color:var(--ink-3)]">{labelEn}</div>
+          <div className="font-jp text-[10px] text-[color:var(--ink-3)] mt-0.5 tracking-[0.25em]">{labelJp}</div>
+        </div>
+        <div className="font-ui text-[9px] tracking-widest text-[color:var(--ink-3)]">kg</div>
+      </div>
+      <div className="mt-5 min-h-[48px]">
+        {editing ? (
+          <input type="number" step="0.1" inputMode="decimal" autoFocus value={val}
+            onChange={e=>setVal(e.target.value)} onBlur={commit}
+            onKeyDown={(e)=>{ if (e.key === "Enter") commit(); }} className="input-base text-2xl" placeholder="0.0" />
+        ) : (
+          <button onClick={()=>setEditing(true)} className="text-left w-full">
+            {rec ? (<span className="font-en text-3xl text-[color:var(--ink)]">{fmt(rec.weight)}</span>)
+                 : (<span className="font-ui text-[11px] tracking-widest text-[color:var(--ink-3)]">+ TAP TO ENTER</span>)}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function WeeklyForm({ me, onSubmit, onCancel }) {
+  const [form, setForm] = useState({ date: recentMondayStr(), weight: "", fat: "", muscle: "" });
+  const muscleRate = useMemo(() => calcMuscleRate(form.muscle, form.weight), [form.muscle, form.weight]);
+  const ok = form.date && form.weight && form.fat && form.muscle;
+  const submit = (e) => {
+    e.preventDefault(); if (!ok) return;
+    onSubmit({ date: form.date, weight: +form.weight, fat: +form.fat, muscle: +form.muscle });
+  };
+  return (
+    <form onSubmit={submit} className="paper mt-5 px-5 py-6 space-y-5">
+      <div className="flex items-center gap-2">
+        <span className="dot" style={{background: me.color}}></span>
+        <span className="font-ui text-[10px] tracking-widest text-[color:var(--ink-2)]">FOR {me.label}</span>
+        <span className="font-jp text-[10px] text-[color:var(--ink-3)] tracking-[0.2em]">— 月曜の公式測定</span>
+      </div>
+      <FieldLine labelEn="DATE" labelJp="測定日">
+        <input type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})} className="input-base" />
+      </FieldLine>
+      <FieldLine labelEn="WEIGHT" labelJp="体重" unit="kg">
+        <input type="number" step="0.1" inputMode="decimal" placeholder="0.0" value={form.weight}
+          onChange={e=>setForm({...form,weight:e.target.value})} className="input-base" />
+      </FieldLine>
+      <FieldLine labelEn="BODY FAT" labelJp="体脂肪率" unit="%">
+        <input type="number" step="0.1" inputMode="decimal" placeholder="0.0" value={form.fat}
+          onChange={e=>setForm({...form,fat:e.target.value})} className="input-base" />
+      </FieldLine>
+      <FieldLine labelEn="MUSCLE MASS" labelJp="筋肉量（タニタ）" unit="kg">
+        <input type="number" step="0.1" inputMode="decimal" placeholder="0.0" value={form.muscle}
+          onChange={e=>setForm({...form,muscle:e.target.value})} className="input-base" />
+      </FieldLine>
+      <div className="paper px-4 py-4">
+        <div className="flex items-baseline justify-between">
+          <div>
+            <div className="font-ui text-[10px] tracking-widest text-[color:var(--ink-3)]">AUTO · SKELETAL MUSCLE</div>
+            <div className="font-jp text-[10px] text-[color:var(--ink-3)] mt-1 tracking-[0.2em]">骨格筋率</div>
+          </div>
+          <div className="font-en text-2xl text-[color:var(--ink)] leading-none">
+            {muscleRate == null ? "—" : fmt(muscleRate, 1)}
+            <span className="font-ui text-[9px] tracking-widest ml-1 text-[color:var(--ink-3)]">%</span>
+          </div>
+        </div>
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        <button type="button" onClick={onCancel} className="btn-ghost col-span-1">CANCEL</button>
+        <button type="submit" disabled={!ok} className="btn-ink col-span-2">SAVE</button>
+      </div>
+    </form>
+  );
+}
+
+function FieldLine({ labelEn, labelJp, unit, children }) {
+  return (
+    <div>
+      <div className="flex items-baseline justify-between">
+        <div className="flex items-baseline gap-3">
+          <span className="font-ui text-[10px] tracking-widest text-[color:var(--ink-2)]">{labelEn}</span>
+          <span className="font-jp text-[10px] text-[color:var(--ink-3)] tracking-[0.25em]">{labelJp}</span>
+        </div>
+        {unit && <span className="font-ui text-[10px] tracking-widest text-[color:var(--ink-3)]">{unit}</span>}
+      </div>
+      {children}
+    </div>
+  );
+}
+function Stat({ labelEn, valueJp, value, unit, small }) {
+  return (
+    <div>
+      <div className={`font-ui ${small ? 'text-[9px]' : 'text-[10px]'} tracking-widest text-[color:var(--ink-3)]`}>{labelEn}</div>
+      <div className="font-en text-base text-[color:var(--ink)] mt-0.5">
+        {value}<span className="font-ui text-[9px] tracking-widest ml-0.5 text-[color:var(--ink-3)]">{unit}</span>
+      </div>
+    </div>
+  );
+}
+
+// ========= GRAPH TAB =========
+function GraphTab({ weekly, daily }) {
+  if (weekly.length === 0 && daily.length === 0)
+    return <div className="pt-10 font-jp text-[11px] text-[color:var(--ink-3)] text-center tracking-[0.3em]">— NO DATA YET · 記録を入れるとグラフが表示されます —</div>;
+  return (
+    <div className="pt-6 space-y-10">
+      <div>
+        <div className="font-ui text-[10px] tracking-widest-xl text-[color:var(--ink-3)]">GRAPH</div>
+        <div className="font-en text-2xl mt-2">Transitions</div>
+        <div className="font-jp text-[11px] text-[color:var(--ink-3)] mt-1 tracking-[0.3em]">推移グラフ</div>
+      </div>
+      <div className="flex items-center gap-5 text-[10px]">
+        {PEOPLE.map(p => (
+          <div key={p.id} className="flex items-center gap-2">
+            <span className="dot" style={{background: p.color}}></span>
+            <span className="font-ui tracking-widest text-[color:var(--ink-2)]">{p.label}</span>
+            <span className="font-jp text-[color:var(--ink-3)] tracking-[0.2em]">{p.name}</span>
+          </div>
+        ))}
+      </div>
+      <GraphBlock labelEn="DAILY WEIGHT" labelJp="朝晩の体重" unit="kg"
+        pointsByPerson={dailyWeightSeries(daily)} />
+      <GraphBlock labelEn="WEIGHT (WEEKLY)" labelJp="公式体重" unit="kg"
+        pointsByPerson={weeklySeries(weekly, r => r.weight)} />
+      <GraphBlock labelEn="BODY FAT (WEEKLY)" labelJp="体脂肪率" unit="%"
+        pointsByPerson={weeklySeries(weekly, r => r.fat)} />
+      <GraphBlock labelEn="SKELETAL MUSCLE (WEEKLY)" labelJp="骨格筋率" unit="%"
+        pointsByPerson={weeklySeries(weekly, r => calcMuscleRate(r.muscle, r.weight))} />
+    </div>
+  );
+}
+function weeklySeries(weekly, getter) {
+  const byP = {};
+  for (const p of PEOPLE) {
+    byP[p.id] = weekly.filter(r => r.person === p.id).sort((a,b)=>a.date.localeCompare(b.date))
+      .map(r => ({ date: r.date, value: getter(r) }));
+  }
+  return byP;
+}
+function dailyWeightSeries(daily) {
+  const byP = {};
+  for (const p of PEOPLE) {
+    const list = daily.filter(r => r.person === p.id).slice();
+    list.sort((a,b)=> a.date.localeCompare(b.date) || (a.period === "morning" ? -1 : 1));
+    byP[p.id] = list.map(r => ({
+      date: r.date, label: `${r.date}_${r.period}`, value: r.weight,
+    }));
+  }
+  return byP;
+}
+function GraphBlock({ labelEn, labelJp, unit, pointsByPerson }) {
+  const hasAny = Object.values(pointsByPerson).some(arr => arr.length > 0);
+  return (
+    <div>
+      <div className="flex items-baseline justify-between mb-3">
+        <div>
+          <div className="font-ui text-[10px] tracking-widest text-[color:var(--ink-2)]">{labelEn}</div>
+          <div className="font-jp text-[10px] text-[color:var(--ink-3)] mt-0.5 tracking-[0.25em]">{labelJp}</div>
+        </div>
+        <div className="font-ui text-[10px] tracking-widest text-[color:var(--ink-3)]">{unit}</div>
+      </div>
+      {hasAny ? <GenericLineChart pointsByPerson={pointsByPerson} /> : <div className="font-ui text-[10px] tracking-widest text-[color:var(--ink-3)] py-4 text-center">NO DATA</div>}
+      <div className="hairline-soft mt-4"></div>
+    </div>
+  );
+}
+function GenericLineChart({ pointsByPerson }) {
+  const allKeys = []; const keySet = new Set();
+  for (const pid of Object.keys(pointsByPerson)) {
+    for (const pt of pointsByPerson[pid]) {
+      const k = pt.label || pt.date;
+      if (!keySet.has(k)) { keySet.add(k); allKeys.push({ key: k, date: pt.date, label: pt.label }); }
+    }
+  }
+  allKeys.sort((a,b)=> {
+    if (a.date !== b.date) return a.date.localeCompare(b.date);
+    if (a.label && b.label) return a.label.localeCompare(b.label);
+    return 0;
+  });
+  const keyIndex = new Map(allKeys.map((k,i)=>[k.key, i]));
+  const allVals = [];
+  for (const pid of Object.keys(pointsByPerson)) for (const pt of pointsByPerson[pid]) if (pt.value != null) allVals.push(pt.value);
+  if (allVals.length === 0) return null;
+  const minV = Math.min(...allVals), maxV = Math.max(...allVals);
+  const padV = (maxV - minV) * 0.15 || 1;
+  const yMin = minV - padV, yMax = maxV + padV;
+
+  const W = 340, H = 190, PAD_L = 34, PAD_R = 8, PAD_T = 8, PAD_B = 24;
+  const innerW = W - PAD_L - PAD_R, innerH = H - PAD_T - PAD_B;
+  const xFor = (i) => allKeys.length === 1 ? PAD_L + innerW/2 : PAD_L + (i / (allKeys.length - 1)) * innerW;
+  const yFor = (v) => PAD_T + (1 - (v - yMin) / (yMax - yMin)) * innerH;
+
+  const ticks = 4;
+  const yTicks = [];
+  for (let i=0; i<=ticks; i++) yTicks.push(yMin + (yMax - yMin) * (i/ticks));
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{maxHeight: 230}}>
+      <line x1={PAD_L} y1={PAD_T} x2={W-PAD_R} y2={PAD_T} stroke="#E8E3D9" strokeWidth="1" />
+      <line x1={PAD_L} y1={H-PAD_B} x2={W-PAD_R} y2={H-PAD_B} stroke="#1A1A1A" strokeWidth="1" />
+      {yTicks.map((v, i) => (
+        <g key={i}>
+          {i>0 && i<ticks && <line x1={PAD_L} y1={yFor(v)} x2={W-PAD_R} y2={yFor(v)} stroke="#EFEBE2" strokeWidth="1" strokeDasharray="2 3" />}
+          <text x={PAD_L-6} y={yFor(v)+3} textAnchor="end" fontSize="9"
+            fontFamily="Inter, sans-serif" fill="#8A8478" letterSpacing="0.08em">{fmt(v,1)}</text>
+        </g>
+      ))}
+      {allKeys.map((k, i) => {
+        const skip = allKeys.length > 8 ? Math.ceil(allKeys.length / 6) : 1;
+        if (i % skip !== 0 && i !== allKeys.length - 1) return null;
+        return (
+          <text key={k.key} x={xFor(i)} y={H-PAD_B+14} textAnchor="middle" fontSize="9"
+            fontFamily="Inter, sans-serif" fill="#8A8478" letterSpacing="0.08em">{fmtDate(k.date)}</text>
+        );
+      })}
+      {PEOPLE.map(p => {
+        const pts = pointsByPerson[p.id] || [];
+        const withI = pts.map(pt => ({ ...pt, i: keyIndex.get(pt.label || pt.date) }));
+        const stroke = p.id === "husband" ? "#1A1A1A" : "#A88A63";
+        const segs = []; let cur = [];
+        withI.forEach(pt => {
+          if (pt.value == null) { if (cur.length) segs.push(cur); cur = []; }
+          else cur.push({ x: xFor(pt.i), y: yFor(pt.value) });
+        });
+        if (cur.length) segs.push(cur);
+        return (
+          <g key={p.id}>
+            {segs.map((seg, si) => (
+              <polyline key={si} points={seg.map(q => `${q.x},${q.y}`).join(" ")}
+                fill="none" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            ))}
+            {withI.map((pt, i) => pt.value == null ? null : (
+              <circle key={i} cx={xFor(pt.i)} cy={yFor(pt.value)} r="3" fill="#FFFFFF" stroke={stroke} strokeWidth="1.3" />
+            ))}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+// ========= BATTLE TAB =========
+function BattleTab({ weekly }) {
+  const battle = useMemo(() => computeBattle(weekly), [weekly]);
+  if (!battle.ready) return <div className="pt-10 font-jp text-[11px] text-[color:var(--ink-3)] text-center tracking-[0.3em]">— 夫・妻それぞれ2回以上の公式測定で対決開始 —</div>;
+  return (
+    <div className="pt-6 space-y-8">
+      <div>
+        <div className="font-ui text-[10px] tracking-widest-xl text-[color:var(--ink-3)]">BATTLE</div>
+        <div className="font-en text-2xl mt-2">The Verdict</div>
+        <div className="font-jp text-[11px] text-[color:var(--ink-3)] mt-1 tracking-[0.3em]">対決結果</div>
+      </div>
+      <OverallCard battle={battle} />
+      <div className="hairline-soft"></div>
+      <CategoryRow title="WEIGHT DROP" jp="体重 落ち幅" sub="減らした方が勝ち" results={battle.categories.weight} unit="kg" />
+      <CategoryRow title="BODY FAT DROP" jp="体脂肪率 落ち幅" sub="減らした方が勝ち" results={battle.categories.fat} unit="%" />
+      <CategoryRow title="SKELETAL MUSCLE UP" jp="骨格筋率 アップ幅" sub="増やした方が勝ち" results={battle.categories.muscleRate} unit="%" />
+      <div className="hairline-soft"></div>
+      <div className="font-jp text-[10px] text-[color:var(--ink-3)] leading-relaxed tracking-[0.2em]">
+        RULE ／ 週1回の公式測定の「最初」と「最新」を比較。各部門の勝者に1点、合計点が多い方が総合優勝。同点は引き分け。朝晩の体重は対決には使いません。
+      </div>
+    </div>
+  );
+}
+function OverallCard({ battle }) {
+  const { points, overallWinner } = battle;
+  return (
+    <div className="paper px-6 py-10 text-center">
+      <div className="font-ui text-[10px] tracking-widest-xl text-[color:var(--ink-3)]">OVERALL WINNER</div>
+      <div className="font-jp text-[10px] text-[color:var(--ink-3)] mt-1 tracking-[0.3em]">総 合 優 勝</div>
+      <div className="mt-6">
+        {overallWinner === "tie" ? (
+          <>
+            <div className="font-en text-4xl text-[color:var(--ink)]">— TIE —</div>
+            <div className="font-jp text-[11px] text-[color:var(--ink-3)] mt-2 tracking-[0.3em]">引き分け</div>
+          </>
+        ) : (
+          <>
+            <div className="font-en text-5xl" style={{color: PEOPLE.find(p=>p.id===overallWinner).color}}>
+              {PEOPLE.find(p=>p.id===overallWinner).label}
+            </div>
+            <div className="font-jp text-[11px] text-[color:var(--ink-3)] mt-2 tracking-[0.3em]">{PEOPLE.find(p=>p.id===overallWinner).name}</div>
+          </>
+        )}
+      </div>
+      <div className="hairline-soft mt-8 mb-5"></div>
+      <div className="flex justify-around">
+        {PEOPLE.map(p => (
+          <div key={p.id}>
+            <div className="flex items-center justify-center gap-2">
+              <span className="dot" style={{background: p.color}}></span>
+              <span className="font-ui text-[10px] tracking-widest text-[color:var(--ink-2)]">{p.label}</span>
+            </div>
+            <div className="font-en text-3xl mt-2" style={{color: p.color}}>
+              {points[p.id]}<span className="font-ui text-[9px] tracking-widest ml-1 text-[color:var(--ink-3)]">PTS</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+function CategoryRow({ title, jp, sub, results, unit }) {
+  return (
+    <div>
+      <div className="flex items-baseline justify-between">
+        <div>
+          <div className="font-ui text-[11px] tracking-widest text-[color:var(--ink)]">{title}</div>
+          <div className="font-jp text-[10px] text-[color:var(--ink-3)] mt-0.5 tracking-[0.25em]">{jp}　— {sub}</div>
+        </div>
+        {results.winner !== "tie" && (
+          <div className="font-ui text-[9px] tracking-widest text-[color:var(--gold)]">WIN — {PEOPLE.find(p=>p.id===results.winner).label}</div>
+        )}
+      </div>
+      <div className="mt-4 space-y-2">
+        {PEOPLE.map(p => {
+          const s = results.scores[p.id];
+          const isWinner = results.winner === p.id;
+          return (
+            <div key={p.id} className={`flex items-baseline justify-between py-3 ${isWinner ? 'bg-[color:var(--bg-soft)] px-4' : 'px-4 border-b border-[color:var(--line-soft)]'}`}>
+              <div className="flex items-center gap-3">
+                <span className="dot" style={{background: p.color}}></span>
+                <span className="font-ui text-[10px] tracking-widest text-[color:var(--ink-2)]">{p.label}</span>
+                <span className="font-en text-[11px] text-[color:var(--ink-3)] ml-2">
+                  {s.baseline!=null ? fmt(s.baseline) : "—"} → {s.latest!=null ? fmt(s.latest) : "—"} {unit}
+                </span>
+              </div>
+              <div className={`font-en text-xl ${s.delta > 0 ? 'text-[color:var(--ink)]' : s.delta < 0 ? 'text-red-700' : 'text-[color:var(--ink-3)]'}`}>
+                {s.delta == null ? "—" : (s.delta > 0 ? "+" : "") + fmt(s.delta,1)}
+                <span className="font-ui text-[9px] tracking-widest ml-1 text-[color:var(--ink-3)]">{unit}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+function computeBattle(weekly) {
+  const getList = (pid) => weekly.filter(r => r.person === pid).sort((a,b)=>a.date.localeCompare(b.date));
+  const ready = PEOPLE.every(p => getList(p.id).length >= 2);
+  if (!ready) return { ready: false };
+  const data = {};
+  for (const p of PEOPLE) { const list = getList(p.id); data[p.id] = { baseline: list[0], latest: list[list.length-1] }; }
+  const scoreFor = (p, metric, mode) => {
+    const { baseline, latest } = data[p.id];
+    if (!baseline || !latest) return { baseline:null, latest:null, delta:null };
+    const getVal = (r) => metric === "muscleRate" ? calcMuscleRate(r.muscle, r.weight) : Number(r[metric]);
+    const b = getVal(baseline), l = getVal(latest);
+    const delta = mode === "down" ? (b - l) : (l - b);
+    return { baseline: b, latest: l, delta };
+  };
+  const build = (metric, mode) => {
+    const scores = {}; for (const p of PEOPLE) scores[p.id] = scoreFor(p, metric, mode);
+    const vals = PEOPLE.map(p => scores[p.id].delta);
+    let winner = "tie";
+    if (vals[0] > vals[1]) winner = PEOPLE[0].id;
+    else if (vals[1] > vals[0]) winner = PEOPLE[1].id;
+    return { scores, winner };
+  };
+  const categories = { weight: build("weight","down"), fat: build("fat","down"), muscleRate: build("muscleRate","up") };
+  const points = { husband: 0, wife: 0 };
+  Object.values(categories).forEach(c => { if (c.winner !== "tie") points[c.winner] += 1; });
+  let overallWinner = "tie";
+  if (points.husband > points.wife) overallWinner = "husband";
+  else if (points.wife > points.husband) overallWinner = "wife";
+  return { ready: true, categories, points, overallWinner };
+}
+
+// ========= Settings =========
+function SettingsModal({ me, device, onClose, onResetDevice }) {
+  const [showCode, setShowCode] = useState(false);
+  return (
+    <div className="fixed inset-0 z-30 bg-black/20" onClick={onClose}>
+      <div className="absolute bottom-0 left-0 right-0 bg-[color:var(--bg)] safe-bottom" onClick={e=>e.stopPropagation()}>
+        <div className="max-w-md mx-auto px-6 py-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="font-ui text-[10px] tracking-widest-xl text-[color:var(--ink-3)]">SETTINGS</div>
+              <div className="font-en text-2xl mt-1">Menu</div>
+            </div>
+            <button onClick={onClose} className="font-ui text-[10px] tracking-widest text-[color:var(--ink-3)]">CLOSE</button>
+          </div>
+          <div className="hairline mt-5 mb-2"></div>
+
+          <div className="paper px-4 py-4 my-4">
+            <div className="flex items-center gap-3">
+              <span className="dot" style={{background: me.color, width:10, height:10}}></span>
+              <div>
+                <div className="font-ui text-[11px] tracking-widest">{me.label}</div>
+                <div className="font-jp text-[10px] text-[color:var(--ink-3)] tracking-[0.25em]">このデバイスの利用者は {me.name}</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="paper px-4 py-4 my-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="font-ui text-[10px] tracking-widest text-[color:var(--ink-3)]">PAIR CODE</div>
+                <div className="font-jp text-[10px] text-[color:var(--ink-3)] mt-0.5 tracking-[0.25em]">ペアコード（パートナーに共有）</div>
+              </div>
+              <button onClick={()=>setShowCode(v=>!v)}
+                className="font-ui text-[10px] tracking-widest text-[color:var(--ink-2)]">{showCode ? "HIDE" : "SHOW"}</button>
+            </div>
+            {showCode && <div className="pair-code-display mt-4">{device.pair_code}</div>}
+          </div>
+
+          <button onClick={onResetDevice} className="btn-ghost mt-2">CHANGE DEVICE USER</button>
+          <div className="font-jp text-[10px] text-[color:var(--ink-3)] mt-2 tracking-[0.2em]">利用者を切り替える（パスコード必要／クラウド上の記録は残ります）</div>
+
+          <div className="hairline-soft mt-6 mb-4"></div>
+          <div className="font-ui text-[9px] tracking-widest text-[color:var(--ink-3)] leading-relaxed">
+            DATA IS SYNCED TO SUPABASE CLOUD (TOKYO).<br/>
+            記録はクラウドに保存されます。
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ========= Bottom Nav =========
+function BottomNav({ tab, setTab }) {
+  const items = [
+    { id: "home", en: "HOME", jp: "ホーム" },
+    { id: "graph", en: "GRAPH", jp: "推移" },
+    { id: "battle", en: "BATTLE", jp: "対決" },
+  ];
+  return (
+    <div className="fixed bottom-0 left-0 right-0 safe-bottom" style={{background:"rgba(245,242,236,0.95)", backdropFilter: "blur(10px)", borderTop: "1px solid var(--line)"}}>
+      <div className="max-w-md mx-auto flex">
+        {items.map(it => (
+          <button key={it.id} onClick={()=>setTab(it.id)} className="flex-1 py-4">
+            <div className={`font-ui text-[11px] tracking-widest ${tab===it.id ? 'text-[color:var(--ink)]' : 'text-[color:var(--ink-3)]'}`}>{it.en}</div>
+            <div className={`font-jp text-[10px] mt-1 tracking-[0.25em] ${tab===it.id ? 'text-[color:var(--ink-2)]' : 'text-[color:var(--ink-3)]'}`}>{it.jp}</div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ========= Boot =========
+try {
+  const container = document.getElementById("root");
+  container.innerHTML = "";
+  const root = ReactDOM.createRoot(container);
+  root.render(<App />);
+} catch (err) {
+  document.getElementById("root").innerHTML =
+    '<div style="padding:24px;color:#b91c1c;font-size:12px;white-space:pre-wrap;">ERROR: ' +
+    (err && err.message ? err.message : String(err)) + '</div>';
+  console.error(err);
+}
+</script>
+</body>
+</html>
