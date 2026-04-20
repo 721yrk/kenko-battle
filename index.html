@@ -90,6 +90,37 @@ const SUPABASE_URL = "https://fackpcqplrtffvheylyr.supabase.co";
 const SUPABASE_KEY = "sb_publishable_sgQKEu1pHMeW5pJjcVc37g_RRUIPvmD";
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
+// ========= 画像圧縮 =========
+async function compressImage(file, maxSide = 1280, quality = 0.85) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error);
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('画像読み込み失敗'));
+      img.onload = () => {
+        let { width, height } = img;
+        const side = Math.max(width, height);
+        if (side > maxSide) {
+          const ratio = maxSide / side;
+          width = Math.round(width * ratio);
+          height = Math.round(height * ratio);
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        canvas.toBlob((blob) => {
+          if (!blob) return reject(new Error('Blob変換失敗'));
+          resolve(blob);
+        }, 'image/jpeg', quality);
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 // ========= 定数 =========
 const DEVICE_KEY = "kenko_battle_device_v1";
 const PEOPLE = [
@@ -223,6 +254,7 @@ function App() {
   const [weekly, setWeekly] = useState([]);
   const [daily, setDaily] = useState([]);
   const [pairInfo, setPairInfo] = useState(null);
+  const [meals, setMeals] = useState([]);
   const [tab, setTab] = useState("home");
   const [showSettings, setShowSettings] = useState(false);
   const [online, setOnline] = useState(true);
@@ -253,12 +285,15 @@ function App() {
   // データ取得
   const refetch = async (pair_id) => {
     try {
-      const [w, d, p] = await Promise.all([
+      const [w, d, p, m] = await Promise.all([
         sb.from('weekly_records').select('*').eq('pair_id', pair_id).order('date', { ascending: true }),
         sb.from('daily_records').select('*').eq('pair_id', pair_id).order('date', { ascending: true }),
         sb.from('pairs').select('*').eq('id', pair_id).maybeSingle(),
+        sb.from('meals').select('*').eq('pair_id', pair_id).order('taken_at', { ascending: false }),
       ]);
       if (w.error) throw w.error; if (d.error) throw d.error; if (p.error) throw p.error;
+      if (m.error) { console.warn('meals取得失敗(mealsテーブル未作成かも)', m.error); setMeals([]); }
+      else { setMeals(m.data || []); }
       setWeekly(w.data || []); setDaily(d.data || []);
       setPairInfo(p.data || null);
       setOnline(true);
@@ -289,6 +324,8 @@ function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'daily_records', filter: `pair_id=eq.${device.pair_id}` },
         () => refetch(device.pair_id))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'pairs', filter: `id=eq.${device.pair_id}` },
+        () => refetch(device.pair_id))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'meals', filter: `pair_id=eq.${device.pair_id}` },
         () => refetch(device.pair_id))
       .subscribe();
     return () => { sb.removeChannel(ch); };
@@ -355,6 +392,48 @@ function App() {
     refetch(device.pair_id);
   };
 
+  // --- meal ops ---
+  const addMeal = async (file, meal_type) => {
+    if (!file) return false;
+    const ext = (file.name && file.name.split('.').pop().toLowerCase()) || 'jpg';
+    const safeExt = ['jpg','jpeg','png','webp','heic','heif'].includes(ext) ? ext : 'jpg';
+    const ts = new Date();
+    const iso = ts.toISOString().replace(/[:.]/g,'-');
+    // 圧縮後はJPEGになるので拡張子もjpgに寄せる
+    let blob = file;
+    try {
+      blob = await compressImage(file, 1280, 0.85);
+    } catch(e) { console.warn('圧縮失敗、元ファイルで続行', e); }
+    const outExt = (blob && blob.type === 'image/jpeg') ? 'jpg' : safeExt;
+    const path = `${device.pair_id}/${me.id}/${iso}.${outExt}`;
+
+    const { error: upErr } = await sb.storage.from('meal-photos').upload(path, blob, {
+      contentType: (blob && blob.type) || 'image/jpeg', upsert: false
+    });
+    if (upErr) { alert('アップロード失敗: ' + upErr.message); return false; }
+
+    const { error: insErr } = await sb.from('meals').insert({
+      pair_id: device.pair_id, person: me.id,
+      meal_type, photo_path: path,
+      taken_at: ts.toISOString(),
+    });
+    if (insErr) {
+      await sb.storage.from('meal-photos').remove([path]);
+      alert('保存失敗: ' + insErr.message); return false;
+    }
+    refetch(device.pair_id);
+    return true;
+  };
+  const deleteMeal = async (meal) => {
+    if (!meal) return;
+    if (meal.person !== me.id) { alert('自分の投稿だけ削除できます'); return; }
+    if (!confirm('この写真を削除しますか？')) return;
+    const { error: dbErr } = await sb.from('meals').delete().eq('id', meal.id);
+    if (dbErr) { alert('削除失敗: ' + dbErr.message); return; }
+    await sb.storage.from('meal-photos').remove([meal.photo_path]);
+    refetch(device.pair_id);
+  };
+
   const resetDevice = () => {
     const input = prompt("現在のパスコードを入力してください");
     if (input === null) return;
@@ -371,6 +450,7 @@ function App() {
         {tab === "home"   && <HomeTab   me={me} partner={partner} weekly={weekly} daily={daily} addWeekly={addWeekly} upsertDaily={upsertDaily} deleteWeekly={deleteWeekly} goalDate={pairInfo && pairInfo.goal_date} />}
         {tab === "graph"  && <GraphTab  weekly={weekly} daily={daily} dpeople={dpeople} />}
         {tab === "battle" && <BattleTab weekly={weekly} dpeople={dpeople} goalDate={pairInfo && pairInfo.goal_date} />}
+        {tab === "meals"  && <MealsTab  me={me} meals={meals} dpeople={dpeople} addMeal={addMeal} deleteMeal={deleteMeal} />}
       </div>
       <BottomNav tab={tab} setTab={setTab} />
       {showSettings && (
@@ -1286,12 +1366,209 @@ function NameEditor({ me, onSave }) {
   );
 }
 
+// ========= Meals Tab =========
+const MEAL_TYPES = [
+  { id: "breakfast", jp: "朝" },
+  { id: "lunch",     jp: "昼" },
+  { id: "dinner",    jp: "夜" },
+  { id: "snack",     jp: "間食" },
+];
+const mealTypeJp = (id) => {
+  const m = MEAL_TYPES.find(x => x.id === id);
+  return m ? m.jp : id;
+};
+const defaultMealType = () => {
+  const h = new Date().getHours();
+  if (h < 10) return "breakfast";
+  if (h < 14) return "lunch";
+  if (h < 20) return "dinner";
+  return "snack";
+};
+const photoPublicUrl = (path) => {
+  const { data } = sb.storage.from('meal-photos').getPublicUrl(path);
+  return data.publicUrl;
+};
+const fmtDateJp = (isoDate) => {
+  const d = new Date(isoDate);
+  const wk = ["日","月","火","水","木","金","土"][d.getDay()];
+  return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')} (${wk})`;
+};
+const fmtTimeJp = (iso) => {
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+};
+
+function MealUploadModal({ onClose, onSubmit }) {
+  const [file, setFile] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState("");
+  const [mealType, setMealType] = useState(defaultMealType());
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef(null);
+
+  useEffect(() => {
+    if (!file) { setPreviewUrl(""); return; }
+    const url = URL.createObjectURL(file);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
+  const pick = () => fileRef.current && fileRef.current.click();
+  const handleSubmit = async () => {
+    if (!file || uploading) return;
+    setUploading(true);
+    const ok = await onSubmit(file, mealType);
+    setUploading(false);
+    if (ok) onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50" style={{background:"rgba(26,26,26,0.55)"}} onClick={onClose}>
+      <div className="max-w-md mx-auto h-full flex items-end" onClick={(e)=>e.stopPropagation()}>
+        <div className="w-full bg-[color:var(--paper)] p-6 safe-bottom" style={{borderTop:"1px solid var(--line)"}}>
+          <div className="font-jp text-sm text-[color:var(--ink-2)] tracking-[0.3em] mb-4">食事の記録</div>
+
+          <input ref={fileRef} type="file" accept="image/*" capture="environment"
+            style={{display:'none'}}
+            onChange={(e)=>{ const f = e.target.files && e.target.files[0]; if (f) setFile(f); }} />
+
+          {!previewUrl ? (
+            <button onClick={pick} className="w-full border border-dashed border-[color:var(--line)] py-12 flex items-center justify-center font-jp text-[12px] tracking-[0.3em] text-[color:var(--ink-3)]">
+              写真を選ぶ / 撮影する
+            </button>
+          ) : (
+            <div className="relative">
+              <img src={previewUrl} alt="preview" className="w-full aspect-square object-cover" />
+              <button onClick={pick} className="absolute top-2 right-2 bg-[color:var(--paper)] border border-[color:var(--line)] px-3 py-1 font-jp text-[10px] tracking-[0.2em] text-[color:var(--ink-2)]">
+                変更
+              </button>
+            </div>
+          )}
+
+          <div className="mt-5 grid grid-cols-4 gap-2">
+            {MEAL_TYPES.map(m => (
+              <button key={m.id} onClick={()=>setMealType(m.id)}
+                className={`py-3 font-jp text-[12px] tracking-[0.25em] border ${mealType===m.id ? 'border-[color:var(--ink)] text-[color:var(--ink)]' : 'border-[color:var(--line)] text-[color:var(--ink-3)]'}`}>
+                {m.jp}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex gap-3 mt-6">
+            <button onClick={onClose} className="btn-ghost flex-1">キャンセル</button>
+            <button onClick={handleSubmit} disabled={!file || uploading} className="btn-ink flex-1">
+              {uploading ? "保存中..." : "保存"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MealLightbox({ meal, me, dpeople, onClose, onDelete }) {
+  if (!meal) return null;
+  const author = dpeople.find(p => p.id === meal.person);
+  return (
+    <div className="fixed inset-0 z-50" style={{background:"rgba(26,26,26,0.92)"}} onClick={onClose}>
+      <div className="max-w-md mx-auto h-full flex flex-col" onClick={(e)=>e.stopPropagation()}>
+        <div className="flex justify-between items-center px-5 pt-5 safe-top">
+          <div className="flex items-center gap-2">
+            <span className="dot" style={{background: author ? author.color : 'var(--ink-3)'}}></span>
+            <span className="font-jp text-[11px] text-white tracking-[0.3em]">{author ? author.name : meal.person}</span>
+            <span className="font-jp text-[11px] text-white tracking-[0.3em] opacity-80">· {mealTypeJp(meal.meal_type)}</span>
+          </div>
+          <button onClick={onClose} className="font-jp text-[11px] text-white tracking-[0.3em]">閉じる</button>
+        </div>
+        <div className="flex-1 flex items-center justify-center p-4">
+          <img src={photoPublicUrl(meal.photo_path)} alt="" className="max-w-full max-h-full object-contain" />
+        </div>
+        <div className="px-5 pb-6 safe-bottom">
+          <div className="font-jp text-[11px] text-white tracking-[0.3em] opacity-80 mb-3 text-center">
+            {fmtDateJp(meal.taken_at)} {fmtTimeJp(meal.taken_at)}
+          </div>
+          {meal.person === me.id && (
+            <button onClick={()=>onDelete(meal)} className="w-full py-3 font-jp text-[11px] tracking-[0.3em] text-white" style={{border:"1px solid rgba(255,255,255,0.4)"}}>
+              削除
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MealsTab({ me, meals, dpeople, addMeal, deleteMeal }) {
+  const [showUpload, setShowUpload] = useState(false);
+  const [lightbox, setLightbox] = useState(null);
+
+  const groups = useMemo(() => {
+    const byDate = {};
+    (meals || []).forEach(m => {
+      const d = new Date(m.taken_at);
+      const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      if (!byDate[key]) byDate[key] = [];
+      byDate[key].push(m);
+    });
+    return Object.keys(byDate).sort((a,b)=> a<b?1:-1).map(k => ({ date: k, items: byDate[k] }));
+  }, [meals]);
+
+  return (
+    <div className="py-5">
+      <div className="flex items-center justify-between mb-6">
+        <div className="font-jp text-sm text-[color:var(--ink-2)] tracking-[0.3em]">食事の記録</div>
+        <button onClick={()=>setShowUpload(true)} className="font-jp text-[11px] tracking-[0.3em] text-[color:var(--ink)] border border-[color:var(--ink)] px-4 py-2">
+          ＋ 写真
+        </button>
+      </div>
+
+      {groups.length === 0 && (
+        <div className="paper p-8 text-center">
+          <div className="font-jp text-[12px] text-[color:var(--ink-3)] tracking-[0.3em]">まだ写真はありません</div>
+          <div className="font-jp text-[11px] text-[color:var(--ink-3)] tracking-[0.25em] mt-2">右上の「＋写真」から追加できます</div>
+        </div>
+      )}
+
+      {groups.map(g => (
+        <div key={g.date} className="mb-8">
+          <div className="font-jp text-[11px] text-[color:var(--ink-3)] tracking-[0.3em] mb-3 hairline-soft pt-3">
+            {fmtDateJp(g.date)}
+          </div>
+          <div className="grid grid-cols-3 gap-1">
+            {g.items.map(m => {
+              const author = dpeople.find(p => p.id === m.person);
+              return (
+                <button key={m.id} onClick={()=>setLightbox(m)} className="relative aspect-square overflow-hidden bg-[color:var(--bg-soft)]">
+                  <img src={photoPublicUrl(m.photo_path)} alt="" loading="lazy" className="w-full h-full object-cover" />
+                  <div className="absolute top-1 left-1 flex items-center gap-1 px-1.5 py-0.5" style={{background:"rgba(255,255,255,0.85)"}}>
+                    <span className="dot" style={{background: author ? author.color : 'var(--ink-3)', width:5, height:5}}></span>
+                    <span className="font-jp text-[9px] text-[color:var(--ink-2)] tracking-[0.15em]">{mealTypeJp(m.meal_type)}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+
+      {showUpload && (
+        <MealUploadModal onClose={()=>setShowUpload(false)} onSubmit={addMeal} />
+      )}
+      {lightbox && (
+        <MealLightbox meal={lightbox} me={me} dpeople={dpeople}
+          onClose={()=>setLightbox(null)}
+          onDelete={async (m)=>{ await deleteMeal(m); setLightbox(null); }} />
+      )}
+    </div>
+  );
+}
+
 // ========= Bottom Nav =========
 function BottomNav({ tab, setTab }) {
   const items = [
     { id: "home", jp: "ホーム" },
     { id: "graph", jp: "推移" },
     { id: "battle", jp: "対決" },
+    { id: "meals", jp: "食事" },
   ];
   return (
     <div className="fixed bottom-0 left-0 right-0 safe-bottom" style={{background:"rgba(245,242,236,0.95)", backdropFilter: "blur(10px)", borderTop: "1px solid var(--line)"}}>
