@@ -363,6 +363,19 @@ function App() {
     refetch(device.pair_id);
   };
 
+  // --- personal goals ops (weight / fat / muscle) ---
+  const updateMyGoals = async ({ weight, fat, muscle }) => {
+    const suffix = me.id === "husband" ? "husband" : "wife";
+    const payload = {
+      [`goal_weight_${suffix}`]: (weight === "" || weight === null || weight === undefined) ? null : Number(weight),
+      [`goal_fat_${suffix}`]:    (fat    === "" || fat    === null || fat    === undefined) ? null : Number(fat),
+      [`goal_muscle_${suffix}`]: (muscle === "" || muscle === null || muscle === undefined) ? null : Number(muscle),
+    };
+    const { error } = await sb.from('pairs').update(payload).eq('id', device.pair_id);
+    if (error) { alert("目標の保存に失敗: " + error.message); return; }
+    refetch(device.pair_id);
+  };
+
   // --- weekly ops ---
   const addWeekly = async (rec) => {
     const { error } = await sb.from('weekly_records').upsert({
@@ -448,7 +461,7 @@ function App() {
     <div className="min-h-screen safe-top safe-bottom">
       <Header me={me} partner={partner} online={online} onOpenSettings={()=>setShowSettings(true)} />
       <div className="max-w-md mx-auto px-6 pb-28">
-        {tab === "home"   && <HomeTab   me={me} partner={partner} weekly={weekly} daily={daily} addWeekly={addWeekly} upsertDaily={upsertDaily} deleteWeekly={deleteWeekly} goalDate={pairInfo && pairInfo.goal_date} />}
+        {tab === "home"   && <HomeTab   me={me} partner={partner} weekly={weekly} daily={daily} addWeekly={addWeekly} upsertDaily={upsertDaily} deleteWeekly={deleteWeekly} goalDate={pairInfo && pairInfo.goal_date} pairInfo={pairInfo} />}
         {tab === "graph"  && <GraphTab  weekly={weekly} daily={daily} dpeople={dpeople} />}
         {tab === "battle" && <BattleTab weekly={weekly} dpeople={dpeople} goalDate={pairInfo && pairInfo.goal_date} />}
         {tab === "meals"  && <MealsTab  me={me} meals={meals} dpeople={dpeople} addMeal={addMeal} deleteMeal={deleteMeal} />}
@@ -457,10 +470,12 @@ function App() {
       {showSettings && (
         <SettingsModal me={me} device={device}
           goalDate={pairInfo && pairInfo.goal_date}
+          pairInfo={pairInfo}
           onClose={()=>setShowSettings(false)}
           onResetDevice={resetDevice}
           onUpdateName={updateMyName}
           onUpdateGoalDate={updateGoalDate}
+          onUpdateGoals={updateMyGoals}
           onOpenRecords={()=>{ setShowSettings(false); setShowRecords(true); }} />
       )}
       {showRecords && (
@@ -688,8 +703,125 @@ function PasscodeInput({ length=4, value, onChange }) {
   );
 }
 
+// ========= GOAL PROGRESS (HOME TAB 最上部) =========
+// 各人の「開始時（一番古い週次記録）→ 現在（最新の週次記録）→ 目標」を進捗バーで可視化
+function getGoalsFor(pairInfo, personId) {
+  if (!pairInfo) return { weight: null, fat: null, muscle: null };
+  const suffix = personId === "husband" ? "husband" : "wife";
+  return {
+    weight: pairInfo[`goal_weight_${suffix}`] ?? null,
+    fat:    pairInfo[`goal_fat_${suffix}`]    ?? null,
+    muscle: pairInfo[`goal_muscle_${suffix}`] ?? null,
+  };
+}
+function calcProgress(start, current, goal) {
+  // 全ての値が揃っていない場合は null
+  if (start == null || current == null || goal == null) return null;
+  const s = Number(start), c = Number(current), g = Number(goal);
+  const total = g - s;            // 目標までの道のり（符号付き）
+  const done  = c - s;            // 現在までに進んだ量（符号付き）
+  // start === goal の場合（目標が既に等しい）: 現在==目標なら100%、それ以外は0%
+  if (total === 0) {
+    return { pct: c === g ? 100 : 0, remaining: g - c, reached: c === g };
+  }
+  const raw = (done / total) * 100;
+  const pct = Math.max(0, Math.min(100, raw));
+  const reached = (total > 0 ? c >= g : c <= g);
+  return { pct, remaining: g - c, reached };
+}
+function GoalProgressSection({ me, partner, myWeekly, partnerWeekly, pairInfo }) {
+  // 自分 or 相手の目標が1つでも入っているか
+  const myGoals = getGoalsFor(pairInfo, me.id);
+  const partnerGoals = partner ? getGoalsFor(pairInfo, partner.id) : { weight:null, fat:null, muscle:null };
+  const hasAny = (g) => g.weight != null || g.fat != null || g.muscle != null;
+  if (!hasAny(myGoals) && !hasAny(partnerGoals)) return null;
+  return (
+    <div>
+      <div className="font-jp text-[11px] tracking-[0.3em] text-[color:var(--ink-3)]">01 ／ 目標</div>
+      <div className="font-jp text-xl mt-2 tracking-[0.2em]">目標までのみちのり</div>
+      <div className="mt-5 space-y-4">
+        <GoalProgressCard person={me} isMe={true} weekly={myWeekly} goals={myGoals} />
+        {partner && <GoalProgressCard person={partner} isMe={false} weekly={partnerWeekly} goals={partnerGoals} />}
+      </div>
+    </div>
+  );
+}
+function GoalProgressCard({ person, isMe, weekly, goals }) {
+  // weeklyは日付昇順で渡される想定
+  const oldest = weekly && weekly.length ? weekly[0] : null;
+  const latest = weekly && weekly.length ? weekly[weekly.length - 1] : null;
+  const startWeight = oldest ? Number(oldest.weight) : null;
+  const startFat    = oldest ? Number(oldest.fat)    : null;
+  const startMuscle = oldest ? calcMuscleRate(oldest.weight, oldest.fat) : null;
+  const curWeight = latest ? Number(latest.weight) : null;
+  const curFat    = latest ? Number(latest.fat)    : null;
+  const curMuscle = latest ? calcMuscleRate(latest.weight, latest.fat) : null;
+  const hasGoal = goals.weight != null || goals.fat != null || goals.muscle != null;
+  return (
+    <div className="paper px-5 py-5">
+      <div className="flex items-center gap-2">
+        <span className="dot" style={{background: person.color}}></span>
+        <div className="font-jp text-[11px] tracking-[0.25em] text-[color:var(--ink-2)]">
+          {isMe ? "自分" : person.name}
+        </div>
+      </div>
+      {!hasGoal ? (
+        <div className="font-jp text-[11px] text-[color:var(--ink-3)] mt-3 tracking-[0.2em]">
+          {isMe ? "設定メニューから目標を登録できます" : "まだ目標が設定されていません"}
+        </div>
+      ) : (
+        <div className="mt-4 space-y-4">
+          <GoalMetricRow label="体重"     unit="kg" start={startWeight} current={curWeight} goal={goals.weight} />
+          <GoalMetricRow label="体脂肪率" unit="%"  start={startFat}    current={curFat}    goal={goals.fat} />
+          <GoalMetricRow label="骨格筋率" unit="%"  start={startMuscle} current={curMuscle} goal={goals.muscle} />
+        </div>
+      )}
+    </div>
+  );
+}
+function GoalMetricRow({ label, unit, start, current, goal }) {
+  if (goal == null) {
+    return (
+      <div>
+        <div className="flex items-baseline justify-between">
+          <div className="font-jp text-[11px] tracking-[0.25em] text-[color:var(--ink-3)]">{label}</div>
+          <div className="font-jp text-[10px] tracking-[0.2em] text-[color:var(--ink-3)]">目標未設定</div>
+        </div>
+      </div>
+    );
+  }
+  const prog = calcProgress(start, current, goal);
+  const pct = prog ? prog.pct : 0;
+  const remaining = prog ? prog.remaining : null;
+  const reached = prog ? prog.reached : false;
+  const remainAbs = remaining == null ? null : Math.abs(remaining);
+  const remainDir = remaining == null ? "" : (remaining > 0 ? "+" : remaining < 0 ? "−" : "");
+  return (
+    <div>
+      <div className="flex items-baseline justify-between">
+        <div className="font-jp text-[11px] tracking-[0.25em] text-[color:var(--ink-3)]">{label}</div>
+        <div className="font-jp text-[10px] tracking-[0.2em] text-[color:var(--ink-3)]">
+          {start != null ? fmt(start,1) : "—"} → <span className="text-[color:var(--ink)]">{current != null ? fmt(current,1) : "—"}</span> → 目標 {fmt(goal,1)}{unit}
+        </div>
+      </div>
+      <div className="mt-2 h-1.5 w-full bg-[color:var(--line-soft)] overflow-hidden">
+        <div className="h-full bg-[color:var(--ink)] transition-all"
+          style={{ width: `${pct}%` }}></div>
+      </div>
+      <div className="mt-2 flex items-baseline justify-between">
+        <div className="font-jp text-[10px] tracking-[0.25em] text-[color:var(--ink-3)]">
+          {prog == null ? "開始データ待ち" : reached ? "達成" : `あと${remainDir}${fmt(remainAbs,1)}${unit}`}
+        </div>
+        <div className="font-jp text-[11px] tracking-[0.15em] text-[color:var(--ink-2)]">
+          {prog == null ? "—" : `${Math.round(pct)}%`}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ========= HOME TAB =========
-function HomeTab({ me, partner, weekly, daily, addWeekly, upsertDaily, deleteWeekly, goalDate }) {
+function HomeTab({ me, partner, weekly, daily, addWeekly, upsertDaily, deleteWeekly, goalDate, pairInfo }) {
   const myWeekly = weekly.filter(r => r.person === me.id).sort((a,b)=>a.date.localeCompare(b.date));
   const latestWeekly = myWeekly[myWeekly.length - 1];
   const toNext = daysToNextMonday();
@@ -705,6 +837,9 @@ function HomeTab({ me, partner, weekly, daily, addWeekly, upsertDaily, deleteWee
 
   return (
     <div className="pt-6 space-y-10">
+      <GoalProgressSection me={me} partner={partner}
+        myWeekly={myWeekly} partnerWeekly={partnerWeekly}
+        pairInfo={pairInfo} />
       {goalDate && (
         <div className="paper px-5 py-5">
           <div className="flex items-baseline justify-between">
@@ -1321,7 +1456,7 @@ function computeBattle(weekly) {
 }
 
 // ========= Settings =========
-function SettingsModal({ me, device, goalDate, onClose, onResetDevice, onUpdateName, onUpdateGoalDate, onOpenRecords }) {
+function SettingsModal({ me, device, goalDate, pairInfo, onClose, onResetDevice, onUpdateName, onUpdateGoalDate, onUpdateGoals, onOpenRecords }) {
   const [showCode, setShowCode] = useState(false);
   const [goalVal, setGoalVal] = useState(goalDate || "");
   useEffect(() => { setGoalVal(goalDate || ""); }, [goalDate]);
@@ -1344,6 +1479,12 @@ function SettingsModal({ me, device, goalDate, onClose, onResetDevice, onUpdateN
               <div className="font-jp text-[10px] text-[color:var(--ink-3)] tracking-[0.25em]">このデバイスの利用者</div>
             </div>
             <NameEditor me={me} onSave={onUpdateName} />
+          </div>
+
+          <div className="paper px-4 py-4 my-4">
+            <div className="font-jp text-[12px] tracking-[0.25em] text-[color:var(--ink-2)]">あなたの目標</div>
+            <div className="font-jp text-[10px] text-[color:var(--ink-3)] mt-0.5 tracking-[0.25em]">体重・体脂肪率・骨格筋率</div>
+            <GoalEditor me={me} pairInfo={pairInfo} onSave={onUpdateGoals} />
           </div>
 
           <button onClick={onOpenRecords}
@@ -1418,6 +1559,43 @@ function NameEditor({ me, onSave }) {
     <div className="flex items-baseline justify-between">
       <div className="font-jp text-xl text-[color:var(--ink)] tracking-[0.1em]">{me.name}</div>
       <button onClick={()=>setEditing(true)} className="font-jp text-[11px] tracking-[0.25em] text-[color:var(--ink-2)] border border-[color:var(--line)] px-3 py-1">変更</button>
+    </div>
+  );
+}
+
+function GoalEditor({ me, pairInfo, onSave }) {
+  const suffix = me.id === "husband" ? "husband" : "wife";
+  const currentWeight = pairInfo ? pairInfo[`goal_weight_${suffix}`] : null;
+  const currentFat    = pairInfo ? pairInfo[`goal_fat_${suffix}`]    : null;
+  const currentMuscle = pairInfo ? pairInfo[`goal_muscle_${suffix}`] : null;
+  const [w, setW] = useState(currentWeight ?? "");
+  const [f, setF] = useState(currentFat ?? "");
+  const [m, setM] = useState(currentMuscle ?? "");
+  useEffect(() => { setW(currentWeight ?? ""); }, [currentWeight]);
+  useEffect(() => { setF(currentFat ?? ""); },    [currentFat]);
+  useEffect(() => { setM(currentMuscle ?? ""); }, [currentMuscle]);
+  const commit = () => onSave({ weight: w, fat: f, muscle: m });
+  return (
+    <div className="mt-3 space-y-3">
+      <GoalInputRow label="体重"     unit="kg" value={w} onChange={setW} />
+      <GoalInputRow label="体脂肪率" unit="%"  value={f} onChange={setF} />
+      <GoalInputRow label="骨格筋率" unit="%"  value={m} onChange={setM} />
+      <button onClick={commit}
+        className="btn-ghost mt-1">目標を保存</button>
+    </div>
+  );
+}
+
+function GoalInputRow({ label, unit, value, onChange }) {
+  return (
+    <div className="flex items-center gap-3">
+      <div className="font-jp text-[11px] tracking-[0.25em] text-[color:var(--ink-3)] w-20 shrink-0">{label}</div>
+      <input type="number" step="0.1" inputMode="decimal"
+        value={value}
+        onChange={(e)=>onChange(e.target.value)}
+        className="input-base flex-1 font-jp text-base tracking-[0.1em]"
+        placeholder="—" />
+      <div className="font-jp text-[11px] tracking-[0.2em] text-[color:var(--ink-3)] w-6 shrink-0">{unit}</div>
     </div>
   );
 }
