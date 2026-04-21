@@ -257,6 +257,7 @@ function App() {
   const [meals, setMeals] = useState([]);
   const [tab, setTab] = useState("home");
   const [showSettings, setShowSettings] = useState(false);
+  const [showRecords, setShowRecords] = useState(false);
   const [online, setOnline] = useState(true);
   const [restoring, setRestoring] = useState(false);
 
@@ -459,7 +460,14 @@ function App() {
           onClose={()=>setShowSettings(false)}
           onResetDevice={resetDevice}
           onUpdateName={updateMyName}
-          onUpdateGoalDate={updateGoalDate} />
+          onUpdateGoalDate={updateGoalDate}
+          onOpenRecords={()=>{ setShowSettings(false); setShowRecords(true); }} />
+      )}
+      {showRecords && (
+        <RecordsModal me={me} dpeople={dpeople}
+          weekly={weekly} daily={daily} meals={meals}
+          onClose={()=>setShowRecords(false)}
+          deleteWeekly={deleteWeekly} deleteMeal={deleteMeal} />
       )}
     </div>
   );
@@ -991,13 +999,13 @@ function GraphTab({ weekly, daily, dpeople }) {
           </div>
         ))}
       </div>
-      <GraphBlock label="朝晩の体重" unit="kg"
+      <GraphBlock label="朝晩の体重" unit="kg" dpeople={dpeople}
         pointsByPerson={dailyWeightSeries(daily)} />
-      <GraphBlock label="公式体重（週1）" unit="kg"
+      <GraphBlock label="公式体重（週1）" unit="kg" dpeople={dpeople}
         pointsByPerson={weeklySeries(weekly, r => r.weight)} />
-      <GraphBlock label="体脂肪率（週1）" unit="%"
+      <GraphBlock label="体脂肪率（週1）" unit="%" dpeople={dpeople}
         pointsByPerson={weeklySeries(weekly, r => r.fat)} />
-      <GraphBlock label="骨格筋率（週1）" unit="%"
+      <GraphBlock label="骨格筋率（週1）" unit="%" dpeople={dpeople}
         pointsByPerson={weeklySeries(weekly, r => calcMuscleRate(r.weight, r.fat))} />
     </div>
   );
@@ -1016,12 +1024,12 @@ function dailyWeightSeries(daily) {
     const list = daily.filter(r => r.person === p.id).slice();
     list.sort((a,b)=> a.date.localeCompare(b.date) || (a.period === "morning" ? -1 : 1));
     byP[p.id] = list.map(r => ({
-      date: r.date, label: `${r.date}_${r.period}`, value: r.weight,
+      date: r.date, label: `${r.date}_${r.period}`, value: r.weight, period: r.period,
     }));
   }
   return byP;
 }
-function GraphBlock({ label, unit, pointsByPerson }) {
+function GraphBlock({ label, unit, pointsByPerson, dpeople }) {
   const hasAny = Object.values(pointsByPerson).some(arr => arr.length > 0);
   return (
     <div>
@@ -1031,12 +1039,13 @@ function GraphBlock({ label, unit, pointsByPerson }) {
         </div>
         <div className="font-jp text-[11px] tracking-[0.2em] text-[color:var(--ink-3)]">{unit}</div>
       </div>
-      {hasAny ? <GenericLineChart pointsByPerson={pointsByPerson} /> : <div className="font-jp text-[11px] tracking-[0.25em] text-[color:var(--ink-3)] py-4 text-center">データなし</div>}
+      {hasAny ? <GenericLineChart pointsByPerson={pointsByPerson} unit={unit} dpeople={dpeople} /> : <div className="font-jp text-[11px] tracking-[0.25em] text-[color:var(--ink-3)] py-4 text-center">データなし</div>}
       <div className="hairline-soft mt-4"></div>
     </div>
   );
 }
-function GenericLineChart({ pointsByPerson }) {
+function GenericLineChart({ pointsByPerson, unit, dpeople }) {
+  const [sel, setSel] = useState(null);
   const allKeys = []; const keySet = new Set();
   for (const pid of Object.keys(pointsByPerson)) {
     for (const pt of pointsByPerson[pid]) {
@@ -1066,8 +1075,15 @@ function GenericLineChart({ pointsByPerson }) {
   const yTicks = [];
   for (let i=0; i<=ticks; i++) yTicks.push(yMin + (yMax - yMin) * (i/ticks));
 
+  const nameOfPid = (pid) => {
+    const d = (dpeople || []).find(x => x.id === pid);
+    if (d) return d.name;
+    return pid === "husband" ? "夫" : "妻";
+  };
+  const periodJp = (p) => p === "morning" ? "朝" : p === "night" ? "晩" : "";
+
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{maxHeight: 230}}>
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{maxHeight: 230, touchAction: "manipulation"}} onClick={()=>setSel(null)}>
       <line x1={PAD_L} y1={PAD_T} x2={W-PAD_R} y2={PAD_T} stroke="#E8E3D9" strokeWidth="1" />
       <line x1={PAD_L} y1={H-PAD_B} x2={W-PAD_R} y2={H-PAD_B} stroke="#1A1A1A" strokeWidth="1" />
       {yTicks.map((v, i) => (
@@ -1101,12 +1117,43 @@ function GenericLineChart({ pointsByPerson }) {
               <polyline key={si} points={seg.map(q => `${q.x},${q.y}`).join(" ")}
                 fill="none" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
             ))}
-            {withI.map((pt, i) => pt.value == null ? null : (
-              <circle key={i} cx={xFor(pt.i)} cy={yFor(pt.value)} r="3" fill="#FFFFFF" stroke={stroke} strokeWidth="1.3" />
-            ))}
+            {withI.map((pt, i) => {
+              if (pt.value == null) return null;
+              const cx = xFor(pt.i), cy = yFor(pt.value);
+              const isSel = sel && sel.pid === p.id && sel.key === (pt.label || pt.date);
+              return (
+                <g key={i}>
+                  <circle cx={cx} cy={cy} r={isSel ? 5 : 3} fill={isSel ? stroke : "#FFFFFF"} stroke={stroke} strokeWidth="1.3" pointerEvents="none" />
+                  <circle cx={cx} cy={cy} r="12" fill="transparent" style={{cursor:'pointer'}}
+                    onClick={(e)=>{ e.stopPropagation(); setSel({ pid: p.id, key: pt.label || pt.date, cx, cy, value: pt.value, date: pt.date, period: pt.period, stroke }); }} />
+                </g>
+              );
+            })}
           </g>
         );
       })}
+      {sel && (() => {
+        const tw = 104, th = 42;
+        let tx = sel.cx - tw/2;
+        let ty = sel.cy - th - 10;
+        if (tx < PAD_L) tx = PAD_L;
+        if (tx + tw > W - PAD_R) tx = W - PAD_R - tw;
+        if (ty < PAD_T) ty = sel.cy + 12;
+        const pTxt = sel.period ? ` ${periodJp(sel.period)}` : "";
+        return (
+          <g pointerEvents="none">
+            <rect x={tx} y={ty} width={tw} height={th} rx="3" fill="#1A1A1A" opacity="0.92" />
+            <text x={tx + tw/2} y={ty + 15} textAnchor="middle" fontSize="9"
+              fontFamily="Inter, sans-serif" fill="#E8E3D9" letterSpacing="0.08em">
+              {nameOfPid(sel.pid)} · {fmtDate(sel.date)}{pTxt}
+            </text>
+            <text x={tx + tw/2} y={ty + 32} textAnchor="middle" fontSize="14"
+              fontFamily="Inter, sans-serif" fill="#FFFFFF" letterSpacing="0.02em" fontWeight="600">
+              {fmt(sel.value, 1)}{unit || ''}
+            </text>
+          </g>
+        );
+      })()}
     </svg>
   );
 }
@@ -1274,7 +1321,7 @@ function computeBattle(weekly) {
 }
 
 // ========= Settings =========
-function SettingsModal({ me, device, goalDate, onClose, onResetDevice, onUpdateName, onUpdateGoalDate }) {
+function SettingsModal({ me, device, goalDate, onClose, onResetDevice, onUpdateName, onUpdateGoalDate, onOpenRecords }) {
   const [showCode, setShowCode] = useState(false);
   const [goalVal, setGoalVal] = useState(goalDate || "");
   useEffect(() => { setGoalVal(goalDate || ""); }, [goalDate]);
@@ -1298,6 +1345,15 @@ function SettingsModal({ me, device, goalDate, onClose, onResetDevice, onUpdateN
             </div>
             <NameEditor me={me} onSave={onUpdateName} />
           </div>
+
+          <button onClick={onOpenRecords}
+            className="w-full paper px-4 py-4 my-4 flex items-center justify-between">
+            <div className="text-left">
+              <div className="font-jp text-[12px] tracking-[0.25em] text-[color:var(--ink-2)]">データ記録一覧</div>
+              <div className="font-jp text-[10px] text-[color:var(--ink-3)] mt-0.5 tracking-[0.25em]">日次 / 週次 / 食事（自分・相手）</div>
+            </div>
+            <span className="font-jp text-[13px] tracking-[0.25em] text-[color:var(--ink-3)]">→</span>
+          </button>
 
           <div className="paper px-4 py-4 my-4">
             <div className="font-jp text-[12px] tracking-[0.25em] text-[color:var(--ink-2)]">ゴール日（最終結果発表日）</div>
@@ -1403,7 +1459,8 @@ function MealUploadModal({ onClose, onSubmit }) {
   const [previewUrl, setPreviewUrl] = useState("");
   const [mealType, setMealType] = useState(defaultMealType());
   const [uploading, setUploading] = useState(false);
-  const fileRef = useRef(null);
+  const cameraRef = useRef(null);
+  const libraryRef = useRef(null);
 
   useEffect(() => {
     if (!file) { setPreviewUrl(""); return; }
@@ -1412,7 +1469,8 @@ function MealUploadModal({ onClose, onSubmit }) {
     return () => URL.revokeObjectURL(url);
   }, [file]);
 
-  const pick = () => fileRef.current && fileRef.current.click();
+  const pickCamera = () => cameraRef.current && cameraRef.current.click();
+  const pickLibrary = () => libraryRef.current && libraryRef.current.click();
   const handleSubmit = async () => {
     if (!file || uploading) return;
     setUploading(true);
@@ -1427,20 +1485,29 @@ function MealUploadModal({ onClose, onSubmit }) {
         <div className="w-full bg-[color:var(--paper)] p-6 safe-bottom" style={{borderTop:"1px solid var(--line)"}}>
           <div className="font-jp text-sm text-[color:var(--ink-2)] tracking-[0.3em] mb-4">食事の記録</div>
 
-          <input ref={fileRef} type="file" accept="image/*" capture="environment"
+          <input ref={cameraRef} type="file" accept="image/*" capture="environment"
             style={{display:'none'}}
-            onChange={(e)=>{ const f = e.target.files && e.target.files[0]; if (f) setFile(f); }} />
+            onChange={(e)=>{ const f = e.target.files && e.target.files[0]; if (f) setFile(f); e.target.value = ""; }} />
+          <input ref={libraryRef} type="file" accept="image/*"
+            style={{display:'none'}}
+            onChange={(e)=>{ const f = e.target.files && e.target.files[0]; if (f) setFile(f); e.target.value = ""; }} />
 
           {!previewUrl ? (
-            <button onClick={pick} className="w-full border border-dashed border-[color:var(--line)] py-12 flex items-center justify-center font-jp text-[12px] tracking-[0.3em] text-[color:var(--ink-3)]">
-              写真を選ぶ / 撮影する
-            </button>
+            <div className="grid grid-cols-2 gap-2">
+              <button onClick={pickCamera} className="border border-dashed border-[color:var(--line)] py-10 flex items-center justify-center font-jp text-[12px] tracking-[0.25em] text-[color:var(--ink-3)]">
+                撮影する
+              </button>
+              <button onClick={pickLibrary} className="border border-dashed border-[color:var(--line)] py-10 flex items-center justify-center font-jp text-[12px] tracking-[0.25em] text-[color:var(--ink-3)]">
+                写真を選ぶ
+              </button>
+            </div>
           ) : (
             <div className="relative">
               <img src={previewUrl} alt="preview" className="w-full aspect-square object-cover" />
-              <button onClick={pick} className="absolute top-2 right-2 bg-[color:var(--paper)] border border-[color:var(--line)] px-3 py-1 font-jp text-[10px] tracking-[0.2em] text-[color:var(--ink-2)]">
-                変更
-              </button>
+              <div className="absolute top-2 right-2 flex gap-1">
+                <button onClick={pickCamera} className="bg-[color:var(--paper)] border border-[color:var(--line)] px-3 py-1 font-jp text-[10px] tracking-[0.2em] text-[color:var(--ink-2)]">撮影</button>
+                <button onClick={pickLibrary} className="bg-[color:var(--paper)] border border-[color:var(--line)] px-3 py-1 font-jp text-[10px] tracking-[0.2em] text-[color:var(--ink-2)]">選ぶ</button>
+              </div>
             </div>
           )}
 
@@ -1500,31 +1567,50 @@ function MealLightbox({ meal, me, dpeople, onClose, onDelete }) {
 function MealsTab({ me, meals, dpeople, addMeal, deleteMeal }) {
   const [showUpload, setShowUpload] = useState(false);
   const [lightbox, setLightbox] = useState(null);
+  const [filterPerson, setFilterPerson] = useState(me.id);
+
+  const filtered = useMemo(() => (meals || []).filter(m => m.person === filterPerson), [meals, filterPerson]);
 
   const groups = useMemo(() => {
     const byDate = {};
-    (meals || []).forEach(m => {
+    filtered.forEach(m => {
       const d = new Date(m.taken_at);
       const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
       if (!byDate[key]) byDate[key] = [];
       byDate[key].push(m);
     });
     return Object.keys(byDate).sort((a,b)=> a<b?1:-1).map(k => ({ date: k, items: byDate[k] }));
-  }, [meals]);
+  }, [filtered]);
 
   return (
     <div className="py-5">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <div className="font-jp text-sm text-[color:var(--ink-2)] tracking-[0.3em]">食事の記録</div>
         <button onClick={()=>setShowUpload(true)} className="font-jp text-[11px] tracking-[0.3em] text-[color:var(--ink)] border border-[color:var(--ink)] px-4 py-2">
           ＋ 写真
         </button>
       </div>
 
+      <div className="grid grid-cols-2 gap-2 mb-6">
+        {dpeople.map(p => (
+          <button key={p.id} onClick={()=>setFilterPerson(p.id)}
+            className={`py-2.5 font-jp text-[11px] tracking-[0.25em] border ${filterPerson===p.id ? 'border-[color:var(--ink)] text-[color:var(--ink)]' : 'border-[color:var(--line)] text-[color:var(--ink-3)]'}`}>
+            <span className="inline-flex items-center gap-2">
+              <span className="dot" style={{background: p.color}}></span>
+              {p.id === me.id ? '自分' : p.name}
+            </span>
+          </button>
+        ))}
+      </div>
+
       {groups.length === 0 && (
         <div className="paper p-8 text-center">
-          <div className="font-jp text-[12px] text-[color:var(--ink-3)] tracking-[0.3em]">まだ写真はありません</div>
-          <div className="font-jp text-[11px] text-[color:var(--ink-3)] tracking-[0.25em] mt-2">右上の「＋写真」から追加できます</div>
+          <div className="font-jp text-[12px] text-[color:var(--ink-3)] tracking-[0.3em]">
+            {filterPerson === me.id ? 'まだ写真はありません' : 'パートナーの写真はまだありません'}
+          </div>
+          {filterPerson === me.id && (
+            <div className="font-jp text-[11px] text-[color:var(--ink-3)] tracking-[0.25em] mt-2">右上の「＋写真」から追加できます</div>
+          )}
         </div>
       )}
 
@@ -1558,6 +1644,157 @@ function MealsTab({ me, meals, dpeople, addMeal, deleteMeal }) {
           onClose={()=>setLightbox(null)}
           onDelete={async (m)=>{ await deleteMeal(m); setLightbox(null); }} />
       )}
+    </div>
+  );
+}
+
+// ========= Records Modal =========
+function RecordsModal({ me, dpeople, weekly, daily, meals, onClose, deleteWeekly, deleteMeal }) {
+  const [view, setView] = useState('daily');
+  const [person, setPerson] = useState(me.id);
+
+  const filteredDaily = useMemo(() => (daily || [])
+    .filter(r => r.person === person)
+    .slice()
+    .sort((a,b)=> {
+      const c = b.date.localeCompare(a.date);
+      if (c !== 0) return c;
+      return (a.period === "morning" ? 1 : -1);
+    }), [daily, person]);
+
+  const filteredWeekly = useMemo(() => (weekly || [])
+    .filter(r => r.person === person)
+    .slice()
+    .sort((a,b)=> b.date.localeCompare(a.date)), [weekly, person]);
+
+  const filteredMeals = useMemo(() => (meals || [])
+    .filter(m => m.person === person)
+    .slice()
+    .sort((a,b)=> a.taken_at < b.taken_at ? 1 : -1), [meals, person]);
+
+  return (
+    <div className="fixed inset-0 z-40" style={{background:"rgba(26,26,26,0.45)"}} onClick={onClose}>
+      <div className="absolute inset-0 bg-[color:var(--bg)] overflow-y-auto" onClick={e=>e.stopPropagation()}>
+        <div className="max-w-md mx-auto px-6 py-6 safe-top safe-bottom">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="font-jp text-[11px] tracking-[0.3em] text-[color:var(--ink-3)]">一覧</div>
+              <div className="font-jp text-xl mt-1 tracking-[0.2em]">データ記録</div>
+            </div>
+            <button onClick={onClose} className="font-jp text-[11px] tracking-[0.25em] text-[color:var(--ink-3)]">閉じる</button>
+          </div>
+          <div className="hairline mt-5 mb-5"></div>
+
+          <div className="grid grid-cols-2 gap-2 mb-4">
+            {dpeople.map(p => (
+              <button key={p.id} onClick={()=>setPerson(p.id)}
+                className={`py-3 font-jp text-[12px] tracking-[0.25em] border ${person===p.id ? 'border-[color:var(--ink)] text-[color:var(--ink)]' : 'border-[color:var(--line)] text-[color:var(--ink-3)]'}`}>
+                <span className="inline-flex items-center gap-2">
+                  <span className="dot" style={{background: p.color}}></span>
+                  {p.id === me.id ? '自分' : p.name}
+                </span>
+              </button>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-3 gap-2 mb-6">
+            {[
+              {id:'daily', jp:'日次'},
+              {id:'weekly', jp:'週次'},
+              {id:'meals', jp:'食事'},
+            ].map(v => (
+              <button key={v.id} onClick={()=>setView(v.id)}
+                className={`py-2.5 font-jp text-[11px] tracking-[0.25em] border ${view===v.id ? 'border-[color:var(--ink)] text-[color:var(--ink)]' : 'border-[color:var(--line)] text-[color:var(--ink-3)]'}`}>
+                {v.jp}
+              </button>
+            ))}
+          </div>
+
+          {view === 'daily' && (
+            filteredDaily.length === 0 ? (
+              <div className="paper p-8 text-center">
+                <div className="font-jp text-[12px] text-[color:var(--ink-3)] tracking-[0.3em]">記録がありません</div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {filteredDaily.map(r => (
+                  <div key={r.id || `${r.date}_${r.period}`} className="paper px-4 py-3 flex items-center justify-between">
+                    <div>
+                      <div className="font-jp text-sm tracking-[0.15em] text-[color:var(--ink)]">{fmtDateLong(r.date)}</div>
+                      <div className="font-jp text-[10px] tracking-[0.25em] text-[color:var(--ink-3)] mt-1">
+                        {r.period === "morning" ? "朝" : r.period === "night" ? "晩" : r.period}
+                      </div>
+                    </div>
+                    <div className="font-jp text-base tracking-[0.1em] text-[color:var(--ink)]">
+                      {fmt(r.weight,1)}<span className="text-[10px] text-[color:var(--ink-3)] ml-1">kg</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+
+          {view === 'weekly' && (
+            filteredWeekly.length === 0 ? (
+              <div className="paper p-8 text-center">
+                <div className="font-jp text-[12px] text-[color:var(--ink-3)] tracking-[0.3em]">記録がありません</div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {filteredWeekly.map(r => (
+                  <div key={r.id || r.date} className="paper px-4 py-3">
+                    <div className="flex items-center justify-between">
+                      <div className="font-jp text-sm tracking-[0.15em] text-[color:var(--ink)]">{fmtDateLong(r.date)}</div>
+                      {person === me.id && r.id && (
+                        <button onClick={()=>{ if(confirm('この記録を削除しますか？')) deleteWeekly(r.id); }}
+                          className="font-jp text-[10px] tracking-[0.25em] text-[color:var(--ink-3)]">削除</button>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-3 gap-3 mt-3">
+                      <div>
+                        <div className="font-jp text-[9px] tracking-[0.25em] text-[color:var(--ink-3)]">体重</div>
+                        <div className="font-jp text-sm tracking-[0.05em] mt-1">{fmt(r.weight,1)}<span className="text-[9px] text-[color:var(--ink-3)] ml-1">kg</span></div>
+                      </div>
+                      <div>
+                        <div className="font-jp text-[9px] tracking-[0.25em] text-[color:var(--ink-3)]">体脂肪</div>
+                        <div className="font-jp text-sm tracking-[0.05em] mt-1">{fmt(r.fat,1)}<span className="text-[9px] text-[color:var(--ink-3)] ml-1">%</span></div>
+                      </div>
+                      <div>
+                        <div className="font-jp text-[9px] tracking-[0.25em] text-[color:var(--ink-3)]">骨格筋</div>
+                        <div className="font-jp text-sm tracking-[0.05em] mt-1">{fmt(calcMuscleRate(r.weight, r.fat),1)}<span className="text-[9px] text-[color:var(--ink-3)] ml-1">%</span></div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+
+          {view === 'meals' && (
+            filteredMeals.length === 0 ? (
+              <div className="paper p-8 text-center">
+                <div className="font-jp text-[12px] text-[color:var(--ink-3)] tracking-[0.3em]">記録がありません</div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {filteredMeals.map(m => (
+                  <div key={m.id} className="paper px-3 py-3 flex items-center gap-3">
+                    <img src={photoPublicUrl(m.photo_path)} alt="" loading="lazy" className="w-14 h-14 object-cover flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="font-jp text-[12px] tracking-[0.15em] text-[color:var(--ink)]">{fmtDateJp(m.taken_at)}</div>
+                      <div className="font-jp text-[10px] tracking-[0.2em] text-[color:var(--ink-3)] mt-1">{fmtTimeJp(m.taken_at)} · {mealTypeJp(m.meal_type)}</div>
+                    </div>
+                    {person === me.id && (
+                      <button onClick={()=>{ if(confirm('この写真を削除しますか？')) deleteMeal(m); }}
+                        className="font-jp text-[10px] tracking-[0.25em] text-[color:var(--ink-3)]">削除</button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+        </div>
+      </div>
     </div>
   );
 }
