@@ -1203,12 +1203,7 @@ function GraphTab({ me, weekly, daily, meals, workouts, dpeople }) {
         ))}
       </div>
       <DailyWeightBlock daily={daily} meals={meals} workouts={workouts} dpeople={dpeople} me={me} />
-      <GraphBlock label="公式体重（週1）" unit="kg" dpeople={dpeople}
-        pointsByPerson={weeklySeries(weekly, r => r.weight)} />
-      <GraphBlock label="体脂肪率（週1）" unit="%" dpeople={dpeople}
-        pointsByPerson={weeklySeries(weekly, r => r.fat)} />
-      <GraphBlock label="骨格筋率（週1）" unit="%" dpeople={dpeople}
-        pointsByPerson={weeklySeries(weekly, r => calcMuscleRate(r.weight, r.fat))} />
+      <WeeklyGraphsSection weekly={weekly} meals={meals} workouts={workouts} dpeople={dpeople} />
     </div>
   );
 }
@@ -1371,6 +1366,176 @@ function PeriodAnalysis({ sel, prev, periodData, dpeople }) {
     </div>
   );
 }
+// 週次3グラフ（公式体重/体脂肪率/骨格筋率）+ 共通の期間分析
+function WeeklyGraphsSection({ weekly, meals, workouts, dpeople }) {
+  const [sel, setSel] = useState(null);
+
+  const weeklyByPerson = useMemo(() => {
+    const byP = {};
+    for (const p of PEOPLE) {
+      byP[p.id] = weekly.filter(r => r.person === p.id).sort((a,b)=> a.date.localeCompare(b.date));
+    }
+    return byP;
+  }, [weekly]);
+
+  // 前回の週次測定エントリ
+  const prev = useMemo(() => {
+    if (!sel) return null;
+    const list = weeklyByPerson[sel.pid] || [];
+    const idx = list.findIndex(r => r.date === sel.date);
+    if (idx <= 0) return null;
+    return list[idx-1];
+  }, [sel, weeklyByPerson]);
+
+  // 今回選択した週次測定エントリ
+  const curr = useMemo(() => {
+    if (!sel) return null;
+    const list = weeklyByPerson[sel.pid] || [];
+    return list.find(r => r.date === sel.date) || null;
+  }, [sel, weeklyByPerson]);
+
+  const periodData = useMemo(() => {
+    if (!sel || !prev) return null;
+    // 週次は朝7:00を基準に区切る（前回測定日朝 〜 今回測定日朝）
+    const prevTs = new Date(prev.date + "T07:00:00");
+    const thisTs = new Date(sel.date + "T07:00:00");
+    const mealsInPeriod = (meals || [])
+      .filter(m => m.person === sel.pid)
+      .filter(m => { const t = new Date(m.taken_at); return t > prevTs && t <= thisTs; })
+      .sort((a,b)=> new Date(a.taken_at) - new Date(b.taken_at));
+    const workoutsInPeriod = (workouts || [])
+      .filter(w => w.person === sel.pid)
+      .filter(w => { const t = tsFromWorkoutDate(w.date); return t > prevTs && t <= thisTs; })
+      .sort((a,b)=> a.date.localeCompare(b.date));
+    return { mealsInPeriod, workoutsInPeriod };
+  }, [sel, prev, meals, workouts]);
+
+  return (
+    <>
+      <GraphBlock label="公式体重（週1）" unit="kg" dpeople={dpeople}
+        pointsByPerson={weeklySeries(weekly, r => r.weight)} onSelect={setSel} />
+      <GraphBlock label="体脂肪率（週1）" unit="%" dpeople={dpeople}
+        pointsByPerson={weeklySeries(weekly, r => r.fat)} onSelect={setSel} />
+      <GraphBlock label="骨格筋率（週1）" unit="%" dpeople={dpeople}
+        pointsByPerson={weeklySeries(weekly, r => calcMuscleRate(r.weight, r.fat))} onSelect={setSel} />
+      <div className="font-jp text-[10px] tracking-[0.25em] text-[color:var(--ink-3)] -mt-2 text-center">
+        点をタップすると、前回測定〜今回測定の期間内の食事・筋トレを表示します
+      </div>
+      {sel && (
+        <WeeklyPeriodAnalysis sel={sel} prev={prev} curr={curr} periodData={periodData} dpeople={dpeople} />
+      )}
+    </>
+  );
+}
+
+function WeeklyPeriodAnalysis({ sel, prev, curr, periodData, dpeople }) {
+  const name = (dpeople.find(p => p.id === sel.pid) || {}).name || (sel.pid === "husband" ? "夫" : "妻");
+
+  if (!prev || !curr) {
+    return (
+      <div className="paper px-4 py-4 mt-2">
+        <div className="font-jp text-[11px] tracking-[0.3em] text-[color:var(--ink-3)] mb-2">期間内の記録</div>
+        <div className="font-jp text-[11px] tracking-[0.2em] text-[color:var(--ink-3)]">
+          {name} / {fmtDate(sel.date)}：これが最初の公式測定なので、比較対象がまだありません。
+        </div>
+      </div>
+    );
+  }
+
+  const diffWeight = (curr.weight != null && prev.weight != null) ? (curr.weight - prev.weight) : null;
+  const diffFat = (curr.fat != null && prev.fat != null) ? (curr.fat - prev.fat) : null;
+  const currMuscle = calcMuscleRate(curr.weight, curr.fat);
+  const prevMuscle = calcMuscleRate(prev.weight, prev.fat);
+  const diffMuscle = (currMuscle != null && prevMuscle != null) ? (currMuscle - prevMuscle) : null;
+
+  const mealsInPeriod = periodData ? periodData.mealsInPeriod : [];
+  const workoutsInPeriod = periodData ? periodData.workoutsInPeriod : [];
+
+  // 期間日数
+  const prevD = new Date(prev.date + "T00:00:00");
+  const thisD = new Date(sel.date + "T00:00:00");
+  const days = Math.round((thisD - prevD) / 86400000);
+
+  const DiffCell = ({ label, unit, diff, lowerIsBetter }) => {
+    if (diff == null) return (
+      <div className="text-center">
+        <div className="font-jp text-[9px] tracking-[0.2em] text-[color:var(--ink-3)]">{label}</div>
+        <div className="font-jp text-[12px] tracking-[0.1em] text-[color:var(--ink-3)] mt-1">—</div>
+      </div>
+    );
+    const good = lowerIsBetter ? diff < 0 : diff > 0;
+    const neutral = Math.abs(diff) < 0.05;
+    const color = neutral ? 'text-[color:var(--ink-3)]' : good ? 'text-[color:var(--ink)]' : 'text-[color:var(--ink-2)]';
+    return (
+      <div className="text-center">
+        <div className="font-jp text-[9px] tracking-[0.2em] text-[color:var(--ink-3)]">{label}</div>
+        <div className={`font-jp text-[12px] tracking-[0.1em] mt-1 ${color}`}>
+          {diff > 0 ? "+" : ""}{diff.toFixed(1)}{unit}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="paper px-4 py-4 mt-2">
+      <div className="mb-3">
+        <div className="font-jp text-[10px] tracking-[0.3em] text-[color:var(--ink-3)]">期間内の記録</div>
+        <div className="font-jp text-[12px] tracking-[0.2em] text-[color:var(--ink)] mt-1">
+          {fmtDate(prev.date)} → {fmtDate(sel.date)}（{days}日間）
+        </div>
+        <div className="font-jp text-[10px] tracking-[0.2em] text-[color:var(--ink-3)] mt-1">{name}</div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-2 py-3 border-t border-b border-[color:var(--line-soft)]">
+        <DiffCell label="体重" unit="kg" diff={diffWeight} lowerIsBetter={true} />
+        <DiffCell label="体脂肪率" unit="%" diff={diffFat} lowerIsBetter={true} />
+        <DiffCell label="骨格筋率" unit="%" diff={diffMuscle} lowerIsBetter={false} />
+      </div>
+
+      <div className="mt-4">
+        <div className="font-jp text-[10px] tracking-[0.3em] text-[color:var(--ink-3)] mb-2">食事 ({mealsInPeriod.length})</div>
+        {mealsInPeriod.length === 0 ? (
+          <div className="font-jp text-[11px] tracking-[0.2em] text-[color:var(--ink-3)]">記録なし</div>
+        ) : (
+          <div className="grid grid-cols-4 gap-1">
+            {mealsInPeriod.map(m => (
+              <div key={m.id} className="relative aspect-square overflow-hidden bg-[color:var(--bg-soft)]">
+                <img src={photoPublicUrl(m.photo_path)} alt="" loading="lazy" className="w-full h-full object-cover" />
+                <div className="absolute bottom-0 left-0 right-0 px-1 py-0.5" style={{background:"rgba(255,255,255,0.85)"}}>
+                  <span className="font-jp text-[8px] tracking-[0.15em] text-[color:var(--ink-2)]">{mealTypeJp(m.meal_type)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="hairline-soft mt-4"></div>
+
+      <div className="mt-4">
+        <div className="font-jp text-[10px] tracking-[0.3em] text-[color:var(--ink-3)] mb-2">筋トレ ({workoutsInPeriod.length})</div>
+        {workoutsInPeriod.length === 0 ? (
+          <div className="font-jp text-[11px] tracking-[0.2em] text-[color:var(--ink-3)]">記録なし</div>
+        ) : (
+          <div className="space-y-2">
+            {workoutsInPeriod.map(w => (
+              <div key={w.id} className="flex items-baseline gap-2">
+                <span className="font-jp text-[10px] tracking-[0.2em] text-[color:var(--ink-3)] shrink-0 w-10">{fmtDate(w.date)}</span>
+                <div className="min-w-0 flex-1">
+                  <span className="font-jp text-[12px] tracking-[0.1em] text-[color:var(--ink)]">{w.exercise}</span>
+                  <span className="font-jp text-[10px] tracking-[0.15em] text-[color:var(--ink-3)] ml-2">
+                    {w.sets}×{w.reps}{w.weight != null ? ` ${w.weight}kg` : ""}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function weeklySeries(weekly, getter) {
   const byP = {};
   for (const p of PEOPLE) {
@@ -1390,7 +1555,7 @@ function dailyWeightSeries(daily) {
   }
   return byP;
 }
-function GraphBlock({ label, unit, pointsByPerson, dpeople }) {
+function GraphBlock({ label, unit, pointsByPerson, dpeople, onSelect }) {
   const hasAny = Object.values(pointsByPerson).some(arr => arr.length > 0);
   return (
     <div>
@@ -1400,7 +1565,7 @@ function GraphBlock({ label, unit, pointsByPerson, dpeople }) {
         </div>
         <div className="font-jp text-[11px] tracking-[0.2em] text-[color:var(--ink-3)]">{unit}</div>
       </div>
-      {hasAny ? <GenericLineChart pointsByPerson={pointsByPerson} unit={unit} dpeople={dpeople} /> : <div className="font-jp text-[11px] tracking-[0.25em] text-[color:var(--ink-3)] py-4 text-center">データなし</div>}
+      {hasAny ? <GenericLineChart pointsByPerson={pointsByPerson} unit={unit} dpeople={dpeople} onSelect={onSelect} /> : <div className="font-jp text-[11px] tracking-[0.25em] text-[color:var(--ink-3)] py-4 text-center">データなし</div>}
       <div className="hairline-soft mt-4"></div>
     </div>
   );
