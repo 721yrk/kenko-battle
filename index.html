@@ -255,6 +255,7 @@ function App() {
   const [daily, setDaily] = useState([]);
   const [pairInfo, setPairInfo] = useState(null);
   const [meals, setMeals] = useState([]);
+  const [workouts, setWorkouts] = useState([]);
   const [tab, setTab] = useState("home");
   const [showSettings, setShowSettings] = useState(false);
   const [showRecords, setShowRecords] = useState(false);
@@ -286,15 +287,18 @@ function App() {
   // データ取得
   const refetch = async (pair_id) => {
     try {
-      const [w, d, p, m] = await Promise.all([
+      const [w, d, p, m, wk] = await Promise.all([
         sb.from('weekly_records').select('*').eq('pair_id', pair_id).order('date', { ascending: true }),
         sb.from('daily_records').select('*').eq('pair_id', pair_id).order('date', { ascending: true }),
         sb.from('pairs').select('*').eq('id', pair_id).maybeSingle(),
         sb.from('meals').select('*').eq('pair_id', pair_id).order('taken_at', { ascending: false }),
+        sb.from('workouts').select('*').eq('pair_id', pair_id).order('date', { ascending: false }).order('created_at', { ascending: false }),
       ]);
       if (w.error) throw w.error; if (d.error) throw d.error; if (p.error) throw p.error;
       if (m.error) { console.warn('meals取得失敗(mealsテーブル未作成かも)', m.error); setMeals([]); }
       else { setMeals(m.data || []); }
+      if (wk.error) { console.warn('workouts取得失敗(workoutsテーブル未作成かも)', wk.error); setWorkouts([]); }
+      else { setWorkouts(wk.data || []); }
       setWeekly(w.data || []); setDaily(d.data || []);
       setPairInfo(p.data || null);
       setOnline(true);
@@ -327,6 +331,8 @@ function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'pairs', filter: `id=eq.${device.pair_id}` },
         () => refetch(device.pair_id))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'meals', filter: `pair_id=eq.${device.pair_id}` },
+        () => refetch(device.pair_id))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'workouts', filter: `pair_id=eq.${device.pair_id}` },
         () => refetch(device.pair_id))
       .subscribe();
     return () => { sb.removeChannel(ch); };
@@ -457,6 +463,30 @@ function App() {
     refetch(device.pair_id);
   };
 
+  // --- workout ops ---
+  const addWorkout = async (rec) => {
+    const payload = {
+      pair_id: device.pair_id, person: me.id,
+      date: rec.date, exercise: rec.exercise,
+      sets: Number(rec.sets) || 1,
+      reps: Number(rec.reps) || 1,
+      weight: (rec.weight === "" || rec.weight === null || rec.weight === undefined) ? null : Number(rec.weight),
+      memo: rec.memo ? String(rec.memo).trim() : null,
+    };
+    const { error } = await sb.from('workouts').insert(payload);
+    if (error) { alert("筋トレ記録の保存に失敗: " + error.message); return false; }
+    refetch(device.pair_id);
+    return true;
+  };
+  const deleteWorkout = async (workout) => {
+    if (!workout) return;
+    if (workout.person !== me.id) { alert('自分の記録だけ削除できます'); return; }
+    if (!confirm('この筋トレ記録を削除しますか？')) return;
+    const { error } = await sb.from('workouts').delete().eq('id', workout.id);
+    if (error) { alert('削除失敗: ' + error.message); return; }
+    refetch(device.pair_id);
+  };
+
   const resetDevice = () => {
     const input = prompt("現在のパスコードを入力してください");
     if (input === null) return;
@@ -470,10 +500,11 @@ function App() {
     <div className="min-h-screen safe-top safe-bottom">
       <Header me={me} partner={partner} online={online} onOpenSettings={()=>setShowSettings(true)} />
       <div className="max-w-md mx-auto px-6 pb-28">
-        {tab === "home"   && <HomeTab   me={me} partner={partner} weekly={weekly} daily={daily} addWeekly={addWeekly} upsertDaily={upsertDaily} deleteWeekly={deleteWeekly} goalDate={pairInfo && pairInfo.goal_date} pairInfo={pairInfo} />}
-        {tab === "graph"  && <GraphTab  weekly={weekly} daily={daily} dpeople={dpeople} />}
-        {tab === "battle" && <BattleTab weekly={weekly} dpeople={dpeople} goalDate={pairInfo && pairInfo.goal_date} />}
-        {tab === "meals"  && <MealsTab  me={me} meals={meals} dpeople={dpeople} addMeal={addMeal} deleteMeal={deleteMeal} />}
+        {tab === "home"     && <HomeTab     me={me} partner={partner} weekly={weekly} daily={daily} addWeekly={addWeekly} upsertDaily={upsertDaily} deleteWeekly={deleteWeekly} goalDate={pairInfo && pairInfo.goal_date} pairInfo={pairInfo} />}
+        {tab === "graph"    && <GraphTab    me={me} weekly={weekly} daily={daily} meals={meals} workouts={workouts} dpeople={dpeople} />}
+        {tab === "battle"   && <BattleTab   weekly={weekly} dpeople={dpeople} goalDate={pairInfo && pairInfo.goal_date} />}
+        {tab === "meals"    && <MealsTab    me={me} meals={meals} dpeople={dpeople} addMeal={addMeal} deleteMeal={deleteMeal} />}
+        {tab === "training" && <TrainingTab me={me} workouts={workouts} dpeople={dpeople} addWorkout={addWorkout} deleteWorkout={deleteWorkout} />}
       </div>
       <BottomNav tab={tab} setTab={setTab} />
       {showSettings && (
@@ -1154,7 +1185,7 @@ function Stat({ label, value, unit, small }) {
 }
 
 // ========= GRAPH TAB =========
-function GraphTab({ weekly, daily, dpeople }) {
+function GraphTab({ me, weekly, daily, meals, workouts, dpeople }) {
   if (weekly.length === 0 && daily.length === 0)
     return <div className="pt-10 font-jp text-[11px] text-[color:var(--ink-3)] text-center tracking-[0.3em]">— 記録を入れるとグラフが表示されます —</div>;
   return (
@@ -1171,14 +1202,172 @@ function GraphTab({ weekly, daily, dpeople }) {
           </div>
         ))}
       </div>
-      <GraphBlock label="朝晩の体重" unit="kg" dpeople={dpeople}
-        pointsByPerson={dailyWeightSeries(daily)} />
+      <DailyWeightBlock daily={daily} meals={meals} workouts={workouts} dpeople={dpeople} me={me} />
       <GraphBlock label="公式体重（週1）" unit="kg" dpeople={dpeople}
         pointsByPerson={weeklySeries(weekly, r => r.weight)} />
       <GraphBlock label="体脂肪率（週1）" unit="%" dpeople={dpeople}
         pointsByPerson={weeklySeries(weekly, r => r.fat)} />
       <GraphBlock label="骨格筋率（週1）" unit="%" dpeople={dpeople}
         pointsByPerson={weeklySeries(weekly, r => calcMuscleRate(r.weight, r.fat))} />
+    </div>
+  );
+}
+
+// 期間分析付きの朝晩体重ブロック
+function tsFromDatePeriod(date, period) {
+  const d = new Date(date + "T00:00:00");
+  if (period === "morning") d.setHours(7, 0, 0, 0);
+  else d.setHours(20, 0, 0, 0); // night / デフォルト
+  return d;
+}
+function tsFromWorkoutDate(date) {
+  // 筋トレは日付しか持たないので昼過ぎを仮の時刻とする
+  const d = new Date(date + "T00:00:00");
+  d.setHours(13, 0, 0, 0);
+  return d;
+}
+
+function DailyWeightBlock({ daily, meals, workouts, dpeople, me }) {
+  const [sel, setSel] = useState(null);
+  const pointsByPerson = useMemo(() => dailyWeightSeries(daily), [daily]);
+  const hasAny = Object.values(pointsByPerson).some(arr => arr.length > 0);
+
+  const prev = useMemo(() => {
+    if (!sel) return null;
+    const list = pointsByPerson[sel.pid] || [];
+    const idx = list.findIndex(p => (p.label || p.date) === sel.key);
+    if (idx <= 0) return null;
+    // value がない過去の点はスキップして、直近で値のある点を探す
+    for (let i = idx - 1; i >= 0; i--) {
+      if (list[i].value != null) return list[i];
+    }
+    return null;
+  }, [sel, pointsByPerson]);
+
+  const periodData = useMemo(() => {
+    if (!sel || !prev) return null;
+    const prevTs = tsFromDatePeriod(prev.date, prev.period);
+    const thisTs = tsFromDatePeriod(sel.date, sel.period);
+    const mealsInPeriod = (meals || [])
+      .filter(m => m.person === sel.pid)
+      .filter(m => {
+        const t = new Date(m.taken_at);
+        return t > prevTs && t <= thisTs;
+      })
+      .sort((a,b)=> new Date(a.taken_at) - new Date(b.taken_at));
+    const workoutsInPeriod = (workouts || [])
+      .filter(w => w.person === sel.pid)
+      .filter(w => {
+        const t = tsFromWorkoutDate(w.date);
+        return t > prevTs && t <= thisTs;
+      })
+      .sort((a,b)=> (a.date.localeCompare(b.date)) || (new Date(a.created_at) - new Date(b.created_at)));
+    return { mealsInPeriod, workoutsInPeriod };
+  }, [sel, prev, meals, workouts]);
+
+  return (
+    <div>
+      <div className="flex items-baseline justify-between mb-3">
+        <div>
+          <div className="font-jp text-[12px] tracking-[0.25em] text-[color:var(--ink-2)]">朝晩の体重</div>
+        </div>
+        <div className="font-jp text-[11px] tracking-[0.2em] text-[color:var(--ink-3)]">kg</div>
+      </div>
+      {hasAny
+        ? <GenericLineChart pointsByPerson={pointsByPerson} unit="kg" dpeople={dpeople} onSelect={setSel} />
+        : <div className="font-jp text-[11px] tracking-[0.25em] text-[color:var(--ink-3)] py-4 text-center">データなし</div>}
+      <div className="hairline-soft mt-4"></div>
+      <div className="font-jp text-[10px] tracking-[0.25em] text-[color:var(--ink-3)] mt-3 text-center">
+        点をタップすると、その前の点からの期間内の食事・筋トレを表示します
+      </div>
+      {sel && (
+        <PeriodAnalysis sel={sel} prev={prev} periodData={periodData} dpeople={dpeople} />
+      )}
+    </div>
+  );
+}
+
+function PeriodAnalysis({ sel, prev, periodData, dpeople }) {
+  const name = (dpeople.find(p => p.id === sel.pid) || {}).name || (sel.pid === "husband" ? "夫" : "妻");
+  const periodJp = (p) => p === "morning" ? "朝" : p === "night" ? "晩" : "";
+
+  if (!prev) {
+    return (
+      <div className="paper px-4 py-4 mt-4">
+        <div className="font-jp text-[11px] tracking-[0.3em] text-[color:var(--ink-3)] mb-2">期間内の記録</div>
+        <div className="font-jp text-[11px] tracking-[0.2em] text-[color:var(--ink-3)]">
+          {name} / {fmtDate(sel.date)} {periodJp(sel.period)}：これが最初の記録なので、比較対象がまだありません。
+        </div>
+      </div>
+    );
+  }
+
+  const diff = (sel.value != null && prev.value != null) ? (sel.value - prev.value) : null;
+  const mealsInPeriod = periodData ? periodData.mealsInPeriod : [];
+  const workoutsInPeriod = periodData ? periodData.workoutsInPeriod : [];
+
+  return (
+    <div className="paper px-4 py-4 mt-4">
+      <div className="flex items-baseline justify-between mb-3">
+        <div>
+          <div className="font-jp text-[10px] tracking-[0.3em] text-[color:var(--ink-3)]">期間内の記録</div>
+          <div className="font-jp text-[12px] tracking-[0.2em] text-[color:var(--ink)] mt-1">
+            {fmtDate(prev.date)} {periodJp(prev.period)} → {fmtDate(sel.date)} {periodJp(sel.period)}
+          </div>
+          <div className="font-jp text-[10px] tracking-[0.2em] text-[color:var(--ink-3)] mt-1">{name}</div>
+        </div>
+        {diff != null && (
+          <div className="text-right">
+            <div className="font-jp text-[10px] tracking-[0.25em] text-[color:var(--ink-3)]">体重変化</div>
+            <div className={`font-jp text-base tracking-[0.1em] mt-1 ${diff < 0 ? 'text-[color:var(--ink)]' : diff > 0 ? 'text-[color:var(--ink-2)]' : 'text-[color:var(--ink-3)]'}`}>
+              {diff > 0 ? "+" : ""}{diff.toFixed(1)} kg
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="hairline-soft"></div>
+
+      <div className="mt-4">
+        <div className="font-jp text-[10px] tracking-[0.3em] text-[color:var(--ink-3)] mb-2">食事 ({mealsInPeriod.length})</div>
+        {mealsInPeriod.length === 0 ? (
+          <div className="font-jp text-[11px] tracking-[0.2em] text-[color:var(--ink-3)]">記録なし</div>
+        ) : (
+          <div className="grid grid-cols-4 gap-1">
+            {mealsInPeriod.map(m => (
+              <div key={m.id} className="relative aspect-square overflow-hidden bg-[color:var(--bg-soft)]">
+                <img src={photoPublicUrl(m.photo_path)} alt="" loading="lazy" className="w-full h-full object-cover" />
+                <div className="absolute bottom-0 left-0 right-0 px-1 py-0.5" style={{background:"rgba(255,255,255,0.85)"}}>
+                  <span className="font-jp text-[8px] tracking-[0.15em] text-[color:var(--ink-2)]">{mealTypeJp(m.meal_type)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="hairline-soft mt-4"></div>
+
+      <div className="mt-4">
+        <div className="font-jp text-[10px] tracking-[0.3em] text-[color:var(--ink-3)] mb-2">筋トレ ({workoutsInPeriod.length})</div>
+        {workoutsInPeriod.length === 0 ? (
+          <div className="font-jp text-[11px] tracking-[0.2em] text-[color:var(--ink-3)]">記録なし</div>
+        ) : (
+          <div className="space-y-2">
+            {workoutsInPeriod.map(w => (
+              <div key={w.id} className="flex items-baseline gap-2">
+                <span className="font-jp text-[10px] tracking-[0.2em] text-[color:var(--ink-3)] shrink-0 w-10">{fmtDate(w.date)}</span>
+                <div className="min-w-0 flex-1">
+                  <span className="font-jp text-[12px] tracking-[0.1em] text-[color:var(--ink)]">{w.exercise}</span>
+                  <span className="font-jp text-[10px] tracking-[0.15em] text-[color:var(--ink-3)] ml-2">
+                    {w.sets}×{w.reps}{w.weight != null ? ` ${w.weight}kg` : ""}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1216,8 +1405,9 @@ function GraphBlock({ label, unit, pointsByPerson, dpeople }) {
     </div>
   );
 }
-function GenericLineChart({ pointsByPerson, unit, dpeople }) {
+function GenericLineChart({ pointsByPerson, unit, dpeople, onSelect }) {
   const [sel, setSel] = useState(null);
+  const updateSel = (next) => { setSel(next); if (onSelect) onSelect(next); };
   const allKeys = []; const keySet = new Set();
   for (const pid of Object.keys(pointsByPerson)) {
     for (const pt of pointsByPerson[pid]) {
@@ -1255,7 +1445,7 @@ function GenericLineChart({ pointsByPerson, unit, dpeople }) {
   const periodJp = (p) => p === "morning" ? "朝" : p === "night" ? "晩" : "";
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{maxHeight: 230, touchAction: "manipulation"}} onClick={()=>setSel(null)}>
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{maxHeight: 230, touchAction: "manipulation"}} onClick={()=>updateSel(null)}>
       <line x1={PAD_L} y1={PAD_T} x2={W-PAD_R} y2={PAD_T} stroke="#E8E3D9" strokeWidth="1" />
       <line x1={PAD_L} y1={H-PAD_B} x2={W-PAD_R} y2={H-PAD_B} stroke="#1A1A1A" strokeWidth="1" />
       {yTicks.map((v, i) => (
@@ -1297,7 +1487,7 @@ function GenericLineChart({ pointsByPerson, unit, dpeople }) {
                 <g key={i}>
                   <circle cx={cx} cy={cy} r={isSel ? 5 : 3} fill={isSel ? stroke : "#FFFFFF"} stroke={stroke} strokeWidth="1.3" pointerEvents="none" />
                   <circle cx={cx} cy={cy} r="12" fill="transparent" style={{cursor:'pointer'}}
-                    onClick={(e)=>{ e.stopPropagation(); setSel({ pid: p.id, key: pt.label || pt.date, cx, cy, value: pt.value, date: pt.date, period: pt.period, stroke }); }} />
+                    onClick={(e)=>{ e.stopPropagation(); updateSel({ pid: p.id, key: pt.label || pt.date, cx, cy, value: pt.value, date: pt.date, period: pt.period, stroke }); }} />
                 </g>
               );
             })}
@@ -2026,20 +2216,196 @@ function RecordsModal({ me, dpeople, weekly, daily, meals, onClose, deleteWeekly
   );
 }
 
+// ========= Training Tab =========
+// よく使う筋トレ種目（タップで入力欄に反映。手入力もOK）
+const EXERCISE_PRESETS = [
+  "スクワット", "デッドリフト", "ベンチプレス", "ショルダープレス",
+  "ラットプルダウン", "ダンベルプレス", "腹筋", "プランク",
+  "ランジ", "ヒップスラスト", "懸垂", "プッシュアップ",
+];
+
+function TrainingTab({ me, workouts, dpeople, addWorkout, deleteWorkout }) {
+  const [showForm, setShowForm] = useState(false);
+  const [filterPerson, setFilterPerson] = useState(me.id);
+
+  const filtered = useMemo(() => (workouts || []).filter(w => w.person === filterPerson), [workouts, filterPerson]);
+
+  const groups = useMemo(() => {
+    const byDate = {};
+    filtered.forEach(w => {
+      if (!byDate[w.date]) byDate[w.date] = [];
+      byDate[w.date].push(w);
+    });
+    return Object.keys(byDate).sort((a,b)=> a<b?1:-1).map(k => ({ date: k, items: byDate[k] }));
+  }, [filtered]);
+
+  return (
+    <div className="py-5">
+      <div className="flex items-center justify-between mb-4">
+        <div className="font-jp text-sm text-[color:var(--ink-2)] tracking-[0.3em]">筋トレの記録</div>
+        <button onClick={()=>setShowForm(true)} className="font-jp text-[11px] tracking-[0.3em] text-[color:var(--ink)] border border-[color:var(--ink)] px-4 py-2">
+          ＋ 記録
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 mb-6">
+        {dpeople.map(p => (
+          <button key={p.id} onClick={()=>setFilterPerson(p.id)}
+            className={`py-2.5 font-jp text-[11px] tracking-[0.25em] border ${filterPerson===p.id ? 'border-[color:var(--ink)] text-[color:var(--ink)]' : 'border-[color:var(--line)] text-[color:var(--ink-3)]'}`}>
+            <span className="inline-flex items-center gap-2">
+              <span className="dot" style={{background: p.color}}></span>
+              {p.id === me.id ? '自分' : p.name}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {groups.length === 0 && (
+        <div className="paper p-8 text-center">
+          <div className="font-jp text-[12px] text-[color:var(--ink-3)] tracking-[0.3em]">
+            {filterPerson === me.id ? 'まだ記録はありません' : 'パートナーの記録はまだありません'}
+          </div>
+          {filterPerson === me.id && (
+            <div className="font-jp text-[11px] text-[color:var(--ink-3)] tracking-[0.25em] mt-2">右上の「＋記録」から追加できます</div>
+          )}
+        </div>
+      )}
+
+      {groups.map(g => (
+        <div key={g.date} className="mb-6">
+          <div className="font-jp text-[11px] text-[color:var(--ink-3)] tracking-[0.3em] mb-3 hairline-soft pt-3">
+            {fmtDateJp(g.date)}
+          </div>
+          <div className="space-y-2">
+            {g.items.map(w => (
+              <div key={w.id} className="paper px-4 py-3 flex items-center justify-between">
+                <div className="min-w-0">
+                  <div className="font-jp text-[13px] tracking-[0.15em] text-[color:var(--ink)] truncate">{w.exercise}</div>
+                  <div className="font-jp text-[11px] tracking-[0.2em] text-[color:var(--ink-3)] mt-1">
+                    {w.sets}セット × {w.reps}回{w.weight != null ? ` · ${w.weight}kg` : ""}
+                  </div>
+                  {w.memo && (
+                    <div className="font-jp text-[10px] tracking-[0.15em] text-[color:var(--ink-3)] mt-1 truncate">{w.memo}</div>
+                  )}
+                </div>
+                {w.person === me.id && (
+                  <button onClick={()=>deleteWorkout(w)} aria-label="削除"
+                    className="ml-3 shrink-0 font-jp text-[10px] tracking-[0.25em] text-[color:var(--ink-3)] border border-[color:var(--line)] px-3 py-1.5">
+                    削除
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      {showForm && (
+        <WorkoutFormModal onClose={()=>setShowForm(false)} onSubmit={addWorkout} />
+      )}
+    </div>
+  );
+}
+
+function WorkoutFormModal({ onClose, onSubmit }) {
+  const [date, setDate] = useState(today());
+  const [exercise, setExercise] = useState("");
+  const [sets, setSets] = useState("3");
+  const [reps, setReps] = useState("10");
+  const [weight, setWeight] = useState("");
+  const [memo, setMemo] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const canSubmit = exercise.trim().length > 0 && Number(sets) > 0 && Number(reps) > 0 && !busy;
+
+  const handleSubmit = async () => {
+    if (!canSubmit) return;
+    setBusy(true);
+    const ok = await onSubmit({ date, exercise: exercise.trim(), sets, reps, weight, memo });
+    setBusy(false);
+    if (ok) onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50" style={{background:"rgba(26,26,26,0.55)"}} onClick={onClose}>
+      <div className="max-w-md mx-auto h-full flex items-end" onClick={(e)=>e.stopPropagation()}>
+        <div className="w-full bg-[color:var(--paper)] p-6 safe-bottom overflow-y-auto" style={{borderTop:"1px solid var(--line)", maxHeight:"90vh"}}>
+          <div className="font-jp text-sm text-[color:var(--ink-2)] tracking-[0.3em] mb-4">筋トレの記録</div>
+
+          <div className="mt-2">
+            <label className="font-jp text-[11px] tracking-[0.25em] text-[color:var(--ink-3)] block mb-2">日付</label>
+            <input type="date" value={date} max={today()}
+              onChange={e=>setDate(e.target.value || today())} className="input-base" />
+            {date !== today() && (
+              <div className="font-jp text-[10px] tracking-[0.2em] text-[color:var(--ink-3)] mt-2">※ 過去日として保存されます</div>
+            )}
+          </div>
+
+          <div className="mt-5">
+            <label className="font-jp text-[11px] tracking-[0.25em] text-[color:var(--ink-3)] block mb-2">種目</label>
+            <input type="text" value={exercise} placeholder="例: スクワット"
+              onChange={e=>setExercise(e.target.value)} className="input-base" />
+            <div className="flex flex-wrap gap-1.5 mt-3">
+              {EXERCISE_PRESETS.map(p => (
+                <button key={p} type="button" onClick={()=>setExercise(p)}
+                  className={`font-jp text-[10px] tracking-[0.2em] border px-2.5 py-1 ${exercise===p ? 'border-[color:var(--ink)] text-[color:var(--ink)]' : 'border-[color:var(--line)] text-[color:var(--ink-3)]'}`}>
+                  {p}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-3 mt-5">
+            <div>
+              <label className="font-jp text-[11px] tracking-[0.25em] text-[color:var(--ink-3)] block mb-2">セット</label>
+              <input type="number" inputMode="numeric" min="1" value={sets}
+                onChange={e=>setSets(e.target.value)} className="input-base text-lg" />
+            </div>
+            <div>
+              <label className="font-jp text-[11px] tracking-[0.25em] text-[color:var(--ink-3)] block mb-2">回数</label>
+              <input type="number" inputMode="numeric" min="1" value={reps}
+                onChange={e=>setReps(e.target.value)} className="input-base text-lg" />
+            </div>
+            <div>
+              <label className="font-jp text-[11px] tracking-[0.25em] text-[color:var(--ink-3)] block mb-2">重量 (kg)</label>
+              <input type="number" inputMode="decimal" min="0" step="0.5" value={weight} placeholder="自重"
+                onChange={e=>setWeight(e.target.value)} className="input-base text-lg" />
+            </div>
+          </div>
+
+          <div className="mt-5">
+            <label className="font-jp text-[11px] tracking-[0.25em] text-[color:var(--ink-3)] block mb-2">メモ（任意）</label>
+            <input type="text" value={memo} placeholder="例: フォーム安定 / 次回は+2.5kg"
+              onChange={e=>setMemo(e.target.value)} className="input-base" />
+          </div>
+
+          <div className="flex gap-3 mt-6">
+            <button onClick={onClose} className="btn-ghost flex-1">キャンセル</button>
+            <button onClick={handleSubmit} disabled={!canSubmit} className="btn-ink flex-1">
+              {busy ? "保存中..." : "保存"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ========= Bottom Nav =========
 function BottomNav({ tab, setTab }) {
   const items = [
-    { id: "home", jp: "ホーム" },
-    { id: "graph", jp: "推移" },
-    { id: "battle", jp: "対決" },
-    { id: "meals", jp: "食事" },
+    { id: "home",     jp: "ホーム" },
+    { id: "graph",    jp: "推移" },
+    { id: "battle",   jp: "対決" },
+    { id: "meals",    jp: "食事" },
+    { id: "training", jp: "筋トレ" },
   ];
   return (
     <div className="fixed bottom-0 left-0 right-0 safe-bottom" style={{background:"rgba(245,242,236,0.95)", backdropFilter: "blur(10px)", borderTop: "1px solid var(--line)"}}>
       <div className="max-w-md mx-auto flex">
         {items.map(it => (
           <button key={it.id} onClick={()=>setTab(it.id)} className="flex-1 py-6">
-            <div className={`font-jp text-[14px] tracking-[0.3em] ${tab===it.id ? 'text-[color:var(--ink)]' : 'text-[color:var(--ink-3)]'}`}>{it.jp}</div>
+            <div className={`font-jp text-[12px] tracking-[0.2em] ${tab===it.id ? 'text-[color:var(--ink)]' : 'text-[color:var(--ink-3)]'}`}>{it.jp}</div>
           </button>
         ))}
       </div>
